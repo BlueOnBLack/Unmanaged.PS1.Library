@@ -46,3 +46,24 @@
 
 ## Quick start
 > These are non-actionable installation hints. See the module manifest in `./src` for real install steps.
+
+## Code samples
+Below are quick, high‑level samples showing the module's call patterns. These examples are non‑destructive and intended for documentation/demo use only.
+
+```powershell
+# COM: show product key UI (no parameters)
+Use-ComInterface `
+    -CLSID "17CCA47D-DAE5-4E4A-AC42-CC54E28F334A" `
+    -IID  "f2dcb80d-0670-44bc-9002-cd18688730af" `
+    -Index 3 `
+    -Name  "ShowProductKeyUI" `
+    -Return "void"
+
+# Unmanaged DLL: Beep (kernel32.dll)
+Invoke-UnmanagedMethod `
+    -Dll      "kernel32.dll" `
+    -Function "Beep" `
+    -Return   "bool" `
+    -Params   "uint dwFreq, uint dwDuration" `
+    -Values   @(750, 300)  # 750 Hz beep for 300 ms
+
