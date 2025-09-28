@@ -1,5 +1,6 @@
 Ps1 library supoport
 
+""
 Enum & Load DLL
 Managed Com / win32Api Warper for PS1
 Adjusting Token Privileges & Query *NEW*
@@ -16,6 +17,6 @@ Choice CharSet type, when using Dll Api *NEW*
 Detect If user is part of Administrator group, or match System Account
 Get Access to TEB / PEB & Structs, using shellCode injection *NEW*
 Direct SysCall [AKA stub], & Also, Auto extract SysCall ID Variable From Local Disk / Memory *NEW*
-
+""
 For more info you can also look here.
 https://forums.mydigitallife.net/threads/com-un-managed-warper-for-ps1.89437/
