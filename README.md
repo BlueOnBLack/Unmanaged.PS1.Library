@@ -51,6 +51,10 @@
 Below are quick, high‑level samples showing the module's call patterns. These examples are non‑destructive and intended for documentation/demo use only.
 
 ```powershell
+
+Clear-Host
+write-host
+
 # COM: show product key UI (no parameters)
 Use-ComInterface `
     -CLSID "17CCA47D-DAE5-4E4A-AC42-CC54E28F334A" `
@@ -66,8 +70,6 @@ Invoke-UnmanagedMethod `
     -Return   "bool" `
     -Params   "uint dwFreq, uint dwDuration" `
     -Values   @(750, 300)  # 750 Hz beep for 300 ms
-
-Clear-Host
 
 Write-Host
 $hProc = [IntPtr]::Zero
