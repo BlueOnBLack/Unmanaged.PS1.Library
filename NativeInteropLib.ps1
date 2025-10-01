@@ -6794,7 +6794,7 @@ Function NtCurrentTeb {
 
         # Allocation method for virtual memory
         [Parameter(Mandatory = $false, Position = 2)]
-        [ValidateSet("Base", "Extend")]
+        [ValidateSet("Base", "Extend", "Protect")]
         [string]$Method = "Base",
 
         # Optional flags to select which fields to read from TEB/PEB
@@ -6964,8 +6964,16 @@ Function NtCurrentTeb {
 
     if ($Mode -eq 'Remote') {
         [TEB]::CallbackResult = 0
-        $callback = [Teb]::GetCallback();
-        $callbackPtr = [Marshal]::GetFunctionPointerForDelegate($callback);
+        if (!$Global:MyCallbackDelegate) {
+          [TEB+CallbackDelegate]$callbackDelegate = {
+            param([IntPtr] $delPtr, [IntPtr] $valPtr)
+            [TEB]::CallbackResult = $valPtr
+          }
+          $handle = [gchandle]::Alloc($callbackDelegate, [GCHandleType]::Normal)
+          $Global:MyCallbackDelegate = $callbackDelegate
+          #$Global:MyCallbackDelegate = [Teb]::GetCallback();
+        }
+        $callbackPtr = [Marshal]::GetFunctionPointerForDelegate($Global:MyCallbackDelegate);
 
         if ([IntPtr]::Size -eq 8)
         {
@@ -7028,7 +7036,7 @@ Function NtCurrentTeb {
             [IntPtr]::new(-1),
             [ref] $baseAddress,
             [ref] $regionSize,
-            0x8000 ## MEM_RELEASE
+            0x8000
         );
 
         if ($Log) {
@@ -7067,36 +7075,58 @@ Function NtCurrentTeb {
         return [TEB]::CallbackResult
     }
     
-    $shellcode = Build-ASM-Shell
+    [byte[]]$shellcode = [byte[]](Build-ASM-Shell)
+    $lpflOldProtect = [UInt32]0
+    $baseAddressPtr = $null
     $len = $shellcode.Length
     $baseAddress = [IntPtr]::Zero
     $regionSize = [uintptr]::new($len)
     
-    $ntStatus = if ($Method -eq "Base") {
-        [TEB]::ZwAllocateVirtualMemory(
-           [IntPtr]::new(-1),
-           [ref]$baseAddress,
-           [UIntPtr]::new(0x00),
-           [ref]$regionSize,
-           0x3000, 0x40)
+    if ($Method -match "Base|Extend") {
+        
+        ## Allocate
+        $ntStatus = if ($Method -eq "Base") {
+            [TEB]::ZwAllocateVirtualMemory(
+               [IntPtr]::new(-1),
+               [ref]$baseAddress,
+               [UIntPtr]::new(0x00),
+               [ref]$regionSize,
+               0x3000, 0x40)
+        } elseif ($Method -eq "Extend") {
+            [TEB]::ZwAllocateVirtualMemoryEx(
+               [IntPtr]::new(-1),
+               [ref]$baseAddress,
+               [ref]$regionSize,
+               0x3000, 0x40,
+               [IntPtr]0,0)
+        }
+
+        if ($ntStatus -ne 0) {
+            throw "ZwAllocateVirtualMemory failed with result: $ntStatus"
+        }
+
+        $Address = [IntPtr]::Zero
+        [marshal]::Copy($shellcode, 0x00, $baseAddress, $len)
+        ## Allocate
+
     } else {
-        [TEB]::ZwAllocateVirtualMemoryEx(
-           [IntPtr]::new(-1),
-           [ref]$baseAddress,
-           [ref]$regionSize,
-           0x3000, 0x40,
-           [IntPtr]0,0)
-    }
-
-
-    if ($ntStatus -ne 0) {
-        throw "ZwAllocateVirtualMemory failed with result: $ntStatus"
+        
+        ## Protect
+        $baseAddressPtr = [gchandle]::Alloc($shellcode, 'pinned')
+        $baseAddress = $baseAddressPtr.AddrOfPinnedObject()
+        [IntPtr]$tempBase = $baseAddress
+        if ([TEB]::NtProtectVirtualMemory(
+                [IntPtr]::new(-1),
+                [ref]$tempBase,
+                ([ref]$regionSize),
+                0x00000040,
+                [ref]$lpflOldProtect) -ne 0) {
+            throw "Fail to Protect Memory for SysCall"
+        }
+        ## Protect
     }
 
     try {
-        $Address = [IntPtr]::Zero
-        [marshal]::Copy($shellcode, 0x00, $baseAddress, $len)
-
         switch ($Mode) {
           "Return" {
             if ($log) {
@@ -7136,11 +7166,15 @@ Function NtCurrentTeb {
         return $Address
     }
     finally {
-        [TEB]::ZwFreeVirtualMemory(
-            [IntPtr]::new(-1),
-            [ref]$baseAddress,
-            [ref]$regionSize,
-            0x4000) | Out-Null
+        if ($baseAddressPtr -ne $null) {
+            $baseAddressPtr.Free()
+        } else {
+            [TEB]::ZwFreeVirtualMemory(
+                [IntPtr]::new(-1),
+                [ref]$baseAddress,
+                [ref]$regionSize,
+                0x4000) | Out-Null
+        }
     }
 }
 
