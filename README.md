@@ -67,3 +67,63 @@ Invoke-UnmanagedMethod `
     -Params   "uint dwFreq, uint dwDuration" `
     -Values   @(750, 300)  # 750 Hz beep for 300 ms
 
+Clear-Host
+
+Write-Host
+$hProc = [IntPtr]::Zero
+$hProcNext = [IntPtr]::Zero
+$ret = Invoke-UnmanagedMethod `
+    -Dll NTDLL `
+    -Function ZwGetNextProcess `
+    -Values @($hProc, [UInt32]0x02000000, [UInt32]0x00, [UInt32]0x00, ([ref]$hProcNext)) `
+    -Mode Allocate -SysCall
+write-host "NtGetNextProcess Test: $ret"
+write-host "hProcNext Value :$hProcNext"
+
+Write-Host
+$hThread = [IntPtr]::Zero
+$hThreadNext = [IntPtr]::Zero
+$ret = Invoke-UnmanagedMethod `
+    -Dll NTDLL `
+    -Function ZwGetNextThread `
+    -Values @([IntPtr]::new(-1), $hThread, 0x0040, 0x00, 0x00, ([ref]$hThreadNext)) `
+    -Mode Protect -SysCall
+write-host "NtGetNextThread Test: $ret"
+write-host "hThreadNext Value :$hThreadNext"
+
+Write-Host
+$ret = Invoke-UnmanagedMethod `
+    -Dll NTDLL `
+    -Function NtClose `
+    -Values @([IntPtr]$hProcNext) `
+    -Mode Allocate -SysCall
+write-host "NtClose Test: $ret"
+
+Write-Host
+$FileHandle = [IntPtr]::Zero
+$IoStatusBlock    = New-IntPtr -Size 16
+$ObjectAttributes = New-IntPtr -Size 48 -WriteSizeAtZero
+$filePath = ("\??\{0}\test.txt" -f [Environment]::GetFolderPath('Desktop'))
+$ObjectName = Init-NativeString -Encoding Unicode -Value $filePath
+[Marshal]::WriteIntPtr($ObjectAttributes, 0x10, $ObjectName)
+[Marshal]::WriteInt32($ObjectAttributes,  0x18, 0x40)
+$ret = Invoke-UnmanagedMethod `
+    -Dll NTDLL `
+    -Function NtCreateFile `
+    -Values @(
+        ([ref]$FileHandle),   # OUT HANDLE
+        0x40100080,           # DesiredAccess (GENERIC_WRITE | SYNCHRONIZE | FILE_WRITE_DATA)
+        $ObjectAttributes,    # POBJECT_ATTRIBUTES
+        $IoStatusBlock,       # PIO_STATUS_BLOCK
+        [IntPtr]::Zero,       # AllocationSize
+        0x80,                 # FileAttributes (FILE_ATTRIBUTE_NORMAL)
+        0x07,                 # ShareAccess (read|write|delete)
+        0x5,                  # CreateDisposition (FILE_OVERWRITE_IF)
+        0x20,                 # CreateOptions (FILE_NON_DIRECTORY_FILE)
+        [IntPtr]::Zero,       # EaBuffer
+        0x00                  # EaLength
+    ) `
+    -Mode Protect -SysCall
+Free-NativeString -StringPtr $ObjectName
+write-host "NtCreateFile Test: $ret"
+
