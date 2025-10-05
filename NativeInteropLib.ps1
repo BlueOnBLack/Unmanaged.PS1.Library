@@ -8356,7 +8356,7 @@ https://www.ired.team/offensive-security/privilege-escalation
 * github Source C Code
 * https://github.com/RubisetCie/god-mode
 
-* fgsec (Felipe Gaspar) · GitHub
+* fgsec (Felipe Gaspar) Â· GitHub
 * https://github.com/fgsec/SharpGetSystem
 * https://github.com/fgsec/Offensive/tree/master
 * https://github.com/fgsec/SharpTokenTheft/tree/main
