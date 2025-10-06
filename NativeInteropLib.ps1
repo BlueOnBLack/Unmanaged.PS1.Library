@@ -2143,7 +2143,12 @@ function Free-IntPtr {
         [Parameter(Mandatory=$false)]
         [Object]$handle,
 
-        [ValidateSet("HGlobal", "Handle", "NtHandle", "ServiceHandle", "Heap", "STRING", "UNICODE_STRING", "BSTR", "VARIANT" ,"Local" ,"Auto", "Desktop", "WindowStation")]
+        [ValidateSet(
+            "HGlobal", "Handle", "NtHandle",
+            "ServiceHandle", "Heap", "STRING",
+            "UNICODE_STRING", "BSTR", "VARIANT",
+            "Local", "Auto", "Desktop", "WindowStation",
+            "License")]
         [string]$Method = "HGlobal"
     )
     $IsValidPointer = IsValid-IntPtr $handle
@@ -2207,6 +2212,9 @@ function Free-IntPtr {
         }
         "WindowStation" {
             $null = $WIN32U::NtUserCloseWindowStation($ptrToFree)
+        }
+        "License" {
+            $null = $Global:SLC::SLClose($ptrToFree)
         }
 
         <#
