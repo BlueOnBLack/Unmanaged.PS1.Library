@@ -2151,7 +2151,7 @@ function Free-IntPtr {
             "ServiceHandle", "Heap", "STRING",
             "UNICODE_STRING", "BSTR", "VARIANT",
             "Local", "Auto", "Desktop", "WindowStation",
-            "License")]
+            "License", "LSA")]
         [string]$Method = "HGlobal"
     )
     $IsValidPointer = IsValid-IntPtr $handle
@@ -2168,7 +2168,8 @@ function Free-IntPtr {
         @(
             @('null', 'null', [int], @()), # place holder
             @('NtUserCloseDesktop',       'win32U.dll', [Int], @([IntPtr])),
-            @('NtUserCloseWindowStation', 'win32U.dll', [Int], @([IntPtr]))
+            @('NtUserCloseWindowStation', 'win32U.dll', [Int], @([IntPtr])),
+            @('LsaClose', 'advapi32.dll', [Int], @([IntPtr]))
         ) | % {
             $Module.DefinePInvokeMethod(($_[0]), ($_[1]), 22, 1, [Type]($_[2]), [Type[]]($_[3]), 1, 3).SetImplementationFlags(128) # Def` 128, fail-safe 0 
         }
@@ -2218,6 +2219,9 @@ function Free-IntPtr {
         }
         "License" {
             $null = $Global:SLC::SLClose($ptrToFree)
+        }
+        "LSA" {
+            $null = $WIN32U::LsaClose($ptrToFree)
         }
 
         <#
@@ -2813,7 +2817,9 @@ Function Init-advapi32 {
         @{ Name = "CloseServiceHandle";      Dll = "advapi32.dll"; ReturnType = [BOOL];   Parameters = [Type[]]@([IntPtr]) },
         @{ Name = "StartServiceW";           Dll = "advapi32.dll"; ReturnType = [BOOL];   Parameters = [Type[]]@([IntPtr],[Int32],[IntPtr]) },
         @{ Name = "QueryServiceStatusEx";    Dll = "advapi32.dll"; ReturnType = [BOOL];   Parameters = [Type[]]@([IntPtr],[Int32],[IntPtr],[Int32],[UInt32].MakeByRefType()) },
-        @{ Name = "CreateProcessWithTokenW"; Dll = "advapi32.dll"; ReturnType = [BOOL];   Parameters = [Type[]]@([IntPtr], [Int32], [IntPtr], [IntPtr], [Int32], [IntPtr],[IntPtr],[IntPtr],[IntPtr]) }
+        @{ Name = "CreateProcessWithTokenW"; Dll = "advapi32.dll"; ReturnType = [BOOL];   Parameters = [Type[]]@([IntPtr], [Int32], [IntPtr], [IntPtr], [Int32], [IntPtr],[IntPtr],[IntPtr],[IntPtr]) },
+        @{ Name = "LsaRemoveAccountRights";  Dll = "advapi32.dll"; ReturnType = [UInt32]; Parameters = [Type[]]@([IntPtr], [IntPtr], [Int32], [IntPtr], [Int32]) },
+        @{ Name = "LsaAddAccountRights";     Dll = "advapi32.dll"; ReturnType = [UInt32]; Parameters = [Type[]]@([IntPtr], [IntPtr], [IntPtr], [Int32]) }
     )
     return Register-NativeMethods $functions
 }
@@ -5885,6 +5891,34 @@ typedef struct _LUID {
 
 --------------------
 
+// Sources
+
+@@
+## Sample code to set LSA account previlage via P/Invoke(LsaAddAccountRights).
+## https://gist.github.com/altrive/9151365
+
+@@
+## Privilege Constants (Authorization)
+## https://learn.microsoft.com/en-us/windows/win32/secauthz/privilege-constants
+
+@@
+## User Rights Assignment
+## https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-10/security/threat-protection/security-policy-settings/user-rights-assignment
+
+@@
+## WindowsProcess.c
+## https://github.com/microsoft/Windows-classic-samples/blob/1d363ff4bd17d8e20415b92e2ee989d615cc0d91/Samples/ManagementInfrastructure/cpp/Process/Provider/WindowsProcess.c
+
+// Demo
+
+# Make sure to assigen SeAssignPrimaryTokenPrivilege Priv
+$AssignPrivilege = Adjust-TokenPrivileges -Query | Where-Object { $_.Name -match "SeAssignPrimaryTokenPrivilege" }
+if (-not $AssignPrivilege) {
+   Adjust-TokenPrivileges -Privilege SeAssignPrimaryTokenPrivilege -Account Administrator
+}
+
+--------------------
+
 Clear-Host
 Write-Host
 
@@ -5927,6 +5961,9 @@ Function Adjust-TokenPrivileges {
         [IntPtr]$hProcess,
 
         [Parameter(Mandatory=$false)]
+        [string]$Account,
+
+        [Parameter(Mandatory=$false)]
         [ValidateSet(
         "SeAssignPrimaryTokenPrivilege", "SeAuditPrivilege", "SeBackupPrivilege",
         "SeChangeNotifyPrivilege", "SeCreateGlobalPrivilege", "SeCreatePagefilePrivilege",
@@ -5960,6 +5997,22 @@ Function Adjust-TokenPrivileges {
         [Parameter(Mandatory=$false)]
         [Switch] $Log
     )
+
+    enum LSA_AccessFlags {
+        VIEW_LOCAL_INFORMATION      = 0x00000001L
+        VIEW_AUDIT_INFORMATION      = 0x00000002L
+        GET_PRIVATE_INFORMATION     = 0x00000004L
+        TRUST_ADMIN                 = 0x00000008L
+        CREATE_ACCOUNT              = 0x00000010L
+        CREATE_SECRET               = 0x00000020L
+        CREATE_PRIVILEGE            = 0x00000040L
+        SET_DEFAULT_QUOTA_LIMITS    = 0x00000080L
+        SET_AUDIT_REQUIREMENTS      = 0x00000100L
+        AUDIT_LOG_ADMIN             = 0x00000200L
+        SERVER_ADMIN                = 0x00000400L
+        LOOKUP_NAMES                = 0x00000800L
+        NOTIFICATION                = 0x00001000L
+    }
 
     function Get-PrivilegeLuid {
         param (
@@ -6010,13 +6063,16 @@ Function Adjust-TokenPrivileges {
         $Process = [Process]::GetCurrentProcess()
     }
 
-    if ((!$Privilege -or $Privilege.Count -eq 0) -and (!$AdjustAll) -and (!$Query)) {
-        throw "use -Privilege or -AdjustAll -or -Query"
+    if ((!$Privilege -or $Privilege.Count -eq 0) -and !$AdjustAll -and !$Query -and !$Account) {
+        throw "use -Privilege or -AdjustAll -or -Query -or -Account"
     }
 
-    $count = [bool]($Privilege -and $Privilege.Count -gt 0) + [bool]$AdjustAll + [bool]$Query
+    $count = [bool]($Privilege -and $Privilege.Count -gt 0) + [bool]$AdjustAll + [bool]$Query + [bool]$Account
     if ($count -gt 1) {
-        throw "use -Privilege or -AdjustAll -or -Query"
+        $AccIf = ($count -eq 2 -and [bool]$Account -and [bool]($Privilege -and $Privilege.Count -gt 0))
+        if (!$AccIf) {
+          throw "use -Privilege or -AdjustAll -or -Query -or -Account"
+        }
     }
 
     if ($Privilege ) {
@@ -6050,6 +6106,26 @@ Function Adjust-TokenPrivileges {
             throw "OpenProcessToken failed with -> $retVal"
     }
 
+    if ($AdjustAll) {
+        $Privilege = (
+            "SeAssignPrimaryTokenPrivilege", "SeAuditPrivilege", "SeBackupPrivilege",
+            "SeChangeNotifyPrivilege", "SeCreateGlobalPrivilege", "SeCreatePagefilePrivilege",
+            "SeCreatePermanentPrivilege", "SeCreateSymbolicLinkPrivilege", "SeCreateTokenPrivilege",
+            "SeDebugPrivilege", "SeEnableDelegationPrivilege", "SeImpersonatePrivilege",
+            "SeIncreaseQuotaPrivilege", "SeIncreaseWorkingSetPrivilege", "SeLoadDriverPrivilege",
+            "SeLockMemoryPrivilege", "SeMachineAccountPrivilege", "SeManageVolumePrivilege", 
+            "SeProfileSingleProcessPrivilege", "SeRelabelPrivilege", "SeRemoteShutdownPrivilege",
+            "SeRestorePrivilege", "SeSecurityPrivilege", "SeShutdownPrivilege", "SeSyncAgentPrivilege",
+            "SeSystemEnvironmentPrivilege", "SeSystemProfilePrivilege", "SeSystemtimePrivilege",
+            "SeTakeOwnershipPrivilege", "SeTcbPrivilege", "SeTimeZonePrivilege", "SeTrustedCredManAccessPrivilege",
+            "SeUndockPrivilege", "SeDelegateSessionUserImpersonatePrivilege", "SeIncreaseBasePriorityPrivilege",
+            "SeNetworkLogonRight", "SeInteractiveLogonRight", "SeRemoteInteractiveLogonRight", "SeDenyNetworkLogonRight",
+            "SeDenyBatchLogonRight", "SeDenyServiceLogonRight", "SeDenyInteractiveLogonRight", "SeDenyRemoteInteractiveLogonRight",
+            "SeBatchLogonRight", "SeServiceLogonRight"
+        )
+    }
+
+    # Query Case
     if ($Query) {
         # Allocate memory for TOKEN_PRIVILEGES
         $tokenInfoPtr = [Marshal]::AllocHGlobal($tokenInfoLength)
@@ -6100,28 +6176,84 @@ Function Adjust-TokenPrivileges {
         }
     }
 
-    if ($AdjustAll) {
-        $Privilege = (
-            "SeAssignPrimaryTokenPrivilege", "SeAuditPrivilege", "SeBackupPrivilege",
-            "SeChangeNotifyPrivilege", "SeCreateGlobalPrivilege", "SeCreatePagefilePrivilege",
-            "SeCreatePermanentPrivilege", "SeCreateSymbolicLinkPrivilege", "SeCreateTokenPrivilege",
-            "SeDebugPrivilege", "SeEnableDelegationPrivilege", "SeImpersonatePrivilege",
-            "SeIncreaseQuotaPrivilege", "SeIncreaseWorkingSetPrivilege", "SeLoadDriverPrivilege",
-            "SeLockMemoryPrivilege", "SeMachineAccountPrivilege", "SeManageVolumePrivilege", 
-            "SeProfileSingleProcessPrivilege", "SeRelabelPrivilege", "SeRemoteShutdownPrivilege",
-            "SeRestorePrivilege", "SeSecurityPrivilege", "SeShutdownPrivilege", "SeSyncAgentPrivilege",
-            "SeSystemEnvironmentPrivilege", "SeSystemProfilePrivilege", "SeSystemtimePrivilege",
-            "SeTakeOwnershipPrivilege", "SeTcbPrivilege", "SeTimeZonePrivilege", "SeTrustedCredManAccessPrivilege",
-            "SeUndockPrivilege", "SeDelegateSessionUserImpersonatePrivilege", "SeIncreaseBasePriorityPrivilege",
-            "SeNetworkLogonRight", "SeInteractiveLogonRight", "SeRemoteInteractiveLogonRight", "SeDenyNetworkLogonRight",
-            "SeDenyBatchLogonRight", "SeDenyServiceLogonRight", "SeDenyInteractiveLogonRight", "SeDenyRemoteInteractiveLogonRight",
-            "SeBatchLogonRight", "SeServiceLogonRight"
-        )
-    }
+    # Account Case
+    if ($Account) {
+        $Access = 0
+        [ENUM]::GetNames([LSA_AccessFlags]) | ForEach-Object {
+            $Access = $Access -bor ([LSA_AccessFlags]::$_.Value__)
+        }
 
-    # Bug fix ~~~~ !
-    # Update case of 1 fail, and function break.
-    
+        $policyHandle = [IntPtr]::Zero
+        $AttributesSize = if ([IntPtr]::Size -gt 4) { 48 } else { 24 }
+        $pObjectAttributes = New-IntPtr -Size $AttributesSize
+        $ret = $global:advapi32::LsaOpenPolicy(
+                [IntPtr]::Zero,
+                $pObjectAttributes,
+                $Access,
+                ([ref]$policyHandle)
+            )
+        Free-IntPtr $pObjectAttributes
+
+        if ($ret -ne 0) {
+            throw "LsaOpenPolicy Failure .!"
+        }
+        
+        $NTAccount = [NTAccount]::new($Account)
+        $identity = $NTAccount.Translate([System.Security.Principal.SecurityIdentifier])
+        $AccountSid = New-IntPtr -Size $identity.BinaryLength
+        $buffer = New-Object byte[] $identity.BinaryLength
+        $identity.GetBinaryForm($buffer, 0)
+        [marshal]::Copy($buffer, 0x0, $AccountSid, $buffer.Length)
+
+        $CountOfRights = $Privilege.Length
+        $blockSize = [UIntPtr]::new(([IntPtr]::Size)* 2)
+        $UserRights = New-IntPtr ($CountOfRights * (([IntPtr]::Size)* 2))
+ 
+        try {
+            $idx = -1
+            $allocatedRights = @()
+            foreach ($Priv in $Privilege) {
+                $Right = Init-NativeString -Value $Priv -Encoding Unicode
+                $allocatedRights += $Right
+                $offsetPtr = [IntPtr]::Add($UserRights, (++$idx * (([IntPtr]::Size)* 2)))
+                $global:ntdll::RtlMoveMemory(
+                   $offsetPtr, $Right, $blockSize
+                )
+            }
+            if ($Disable) {
+                $ret = $global:advapi32::LsaRemoveAccountRights(
+                        $policyHandle,
+                        $AccountSid,
+                        0, $UserRights,
+                        $CountOfRights
+                    )
+            }
+            else {
+                $ret = $global:advapi32::LsaAddAccountRights(
+                        $policyHandle,
+                        $AccountSid,
+                        $UserRights,
+                        $CountOfRights
+                    )
+            }
+            if ($ret -ne 0) {
+                Write-Warning "LsaAddAccountRights Failure, Error Code $($ret)"
+            }
+            return ($ret -eq 0)
+        }
+        catch {
+            Write-Host $_ -ForegroundColor Red
+            return $false
+        }
+        finally {
+            Free-IntPtr -handle $hToken -Method NtHandle
+            Free-IntPtr -handle $AccountSid -Method Auto
+            Free-IntPtr -handle $policyHandle -Method LSA
+            Free-IntPtr -handle $UserRights -Method Auto
+            $allocatedRights | % { Free-IntPtr $_ -Method UNICODE_STRING}
+        }
+    }
+   
     # Prepare
     $validEntries = @()
     foreach ($priv in $Privilege) {
@@ -9016,6 +9148,12 @@ write-host
 #$ConsoleApp = 'cmd'
 $ConsoleApp = 'Conhost'
 
+# Make sure to assigen SeAssignPrimaryTokenPrivilege Priv
+$AssignPrivilege = Adjust-TokenPrivileges -Query | Where-Object { $_.Name -match "SeAssignPrimaryTokenPrivilege" }
+if (-not $AssignPrivilege) {
+   Adjust-TokenPrivileges -Privilege SeAssignPrimaryTokenPrivilege -Account Administrator
+}
+
 Invoke-Process `
     -CommandLine "cmd /k echo Hello From TrustedInstaller && whoami" `
     -ServiceName TrustedInstaller `
@@ -9520,9 +9658,13 @@ Function Invoke-ProcessAsUser {
             Process-UserToken -Params $hInfo -UseCurrent
 
         } elseif ($Mode -eq 'User') {
-            if (!(Check-AccountType -AccType System)) {
-                Write-Warning "Could fail if not system Account.!"
-                #return $false
+            $AssignPrivilege = Adjust-TokenPrivileges -Query | Where-Object { $_.Name -match 'SeAssignPrimaryTokenPrivilege' }
+            if (!(Check-AccountType -AccType System) -or -not $AssignPrivilege) {
+                if (-not $AssignPrivilege) {        
+                    Write-Warning "Missing Priv, {SeAssignPrimaryTokenPrivilege}, Could fail if not system Account .!"
+                    Write-Warning "Call -> Adjust-TokenPrivileges -Privilege SeAssignPrimaryTokenPrivilege -Account `$env:USERNAME"
+                    #return $false
+                }
             }
             
             # Prefere hToken for current User
@@ -9763,13 +9905,14 @@ function Get-EnvironmentBlockLength {
 
     return $LengthInBytes
 }
-
     try {
-        if ($hToken -ne [IntPtr]::Zero -and (
-            !(Check-AccountType -AccType System)
-        )) {
-            Write-Warning "Could fail if not system Account.!"
-            #return $false
+        $AssignPrivilege = Adjust-TokenPrivileges -Query | Where-Object { $_.Name -match 'SeAssignPrimaryTokenPrivilege' }
+        if ($hToken -ne [IntPtr]::Zero -and (!(Check-AccountType -AccType System) -or -not $AssignPrivilege)) {
+            if (-not $AssignPrivilege) {        
+                Write-Warning "Missing Priv, {SeAssignPrimaryTokenPrivilege}, Could fail if not system Account .!"
+                Write-Warning "Call -> Adjust-TokenPrivileges -Privilege SeAssignPrimaryTokenPrivilege -Account `$env:USERNAME"
+                #return $false
+            }
         }
 
         $hProcess, $hThread = [IntPtr]::Zero, [IntPtr]::Zero
