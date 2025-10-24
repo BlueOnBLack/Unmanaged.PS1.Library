@@ -8693,7 +8693,6 @@ Function Obtain-UserToken {
         $USER = $Module.CreateType()
     }
 
-
     $phToken = [IntPtr]::Zero
     $UserNamePtr = [Marshal]::StringToHGlobalUni($UserName)
     $PasswordPtr = if ([string]::IsNullOrEmpty($Password)) { [IntPtr]::Zero } else { [Marshal]::StringToHGlobalUni($Password) }
