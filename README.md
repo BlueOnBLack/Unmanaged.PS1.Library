@@ -40,7 +40,7 @@
 
 A collection of PowerShell helper functions for working with Windows low-level APIs, pointers, memory, COM interfaces, tokens, syscalls and more.
 
-## Big label -> Function List
+## Function List
 
 ````
 <#
