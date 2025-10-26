@@ -42,6 +42,7 @@ A collection of PowerShell helper functions for working with Windows low-level A
 
 ## Big label -> Function List
 
+````
 <#
 View Error Message Info, using system32 Build In DLL
 For varios types Win32, Ntstatus, hResult, Activation, etc
@@ -248,7 +249,7 @@ Function Invoke-Process
 Function Invoke-ProcessAsUser
 Function Invoke-NativeProcess
 Function Send-CsrClientCall
-
+````
 
 ## Code samples
 Below are quick, high‑level samples showing the module's call patterns. These examples are non‑destructive and intended for documentation/demo use only.
