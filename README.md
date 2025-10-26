@@ -6,17 +6,6 @@
 > Managed COM / Win32 API bridge and utilities for PowerShell (PS1).  
 > High-level wrapper for advanced native interoperability and system inspection — intended for legitimate administrative, defensive, and research use.
 
-## Table of contents
-- [About](#about)
-- [Key capabilities](#key-capabilities)
-- [Legitimate use cases](#legitimate-use-cases)
-- [Quick start](#quick-start)
-- [Examples (high level)](#examples-high-level)
-- [Security & Responsible Use](#security--responsible-use)
-- [Contributing](#contributing)
-- [License](#license)
-- [Credits & references](#credits--references)
-
 ## About
 `PS1.NativeInterop` is a PowerShell-focused library that exposes a set of managed wrappers and helpers to interact with native Windows APIs, COM interfaces, and low-level process information. The project is intended to aid system administrators, security researchers, and developers who need to inspect, diagnose, or automate system-level tasks from PowerShell.
 
@@ -46,6 +35,220 @@
 
 ## Quick start
 > These are non-actionable installation hints. See the module manifest in `./src` for real install steps.
+>
+> # PowerShell Low-Level Utilities
+
+A collection of PowerShell helper functions for working with Windows low-level APIs, pointers, memory, COM interfaces, tokens, syscalls and more.
+
+## Big label -> Function List
+
+<#
+View Error Message Info, using system32 Build In DLL
+For varios types Win32, Ntstatus, hResult, Activation, etc
+#>
+Function Parse-ErrorMessage
+
+<#
+Get Error facility info for specific error Message
+#>
+Function Parse-ErrorFacility
+
+<#
+Join multiple flags, with ease
+#>
+Function Bor
+
+<#
+Extract Flags From `Flag` value
+#>
+Function Get-EnumFlags
+
+<#
+Dump memory for view it later, with hex editior
+#>
+Function Dump-MemoryAddress
+
+<#
+Initilize & Free, new pointer,
+Using Byte[] or Size, 
+And Also Set First Value For Offset 0x0
+Or make Ref Type [Allocate Handle Size, And Copy Value Of IntPtr]
+Instead ByRef, who sometimes fail. !
+#>
+Function New-IntPtr
+
+<#
+Check if pointer is a valid pointer,
+Return True Or False
+#>
+Function IsValid-IntPtr
+
+<#
+Free pointer from diffrent type's:
+"HGlobal", "Handle", "NtHandle",
+"ServiceHandle", "Heap", "STRING",
+"UNICODE_STRING", "BSTR", "VARIANT",
+"Local", "Auto", "Desktop", "WindowStation",
+"License", "LSA"
+#>
+Function Free-IntPtr
+
+<#
+Register NTDLL! or Any Win32! Api,
+with ease, Using Reflection
+#>
+Function Register-NativeMethods
+
+<#
+Convert Number to Word
+will get diffrent result each time's
+#>
+Function Get-Base26Name
+
+<#
+Get Function ASM Byte's Code
+using Local file [system32] folder
+in case of security software hook
+#>
+Function Get-SysCallData
+
+<#
+Call a specifc Function of IID of CLSID
+using delegete & Low level call's
+Also, can do it manual, Using
+Initialize-ComObject, Receive-ComObject, .. etc
+#>
+Function Use-ComInterface
+
+<#
+Helper to Create Full Interface, using Reflection
+and call, the function later.
+Alternative way for Use-ComInterface
+#>
+Function New-ComInterface
+Function Invoke-ComInterface
+
+<#
+Helper to Create Full Structure, using Reflection
+Also with GetSize And Casting Support
+[Type]::GetSize(), [Type]$handle
+#>
+Function New-Struct
+
+<#
+Helper to Call any Win32 / Low level Api call,
+Including syscall with ease
+Minimal code,Parameters, Dll Name, Function Name
+Using delegete, And ASM, And Protect/Allocate Both way's supported
+#>
+Function Invoke-UnmanagedMethod
+
+<#
+Helper to Create Managed UNICODE_STRING / STRING Struct
+for x64 x68, and read the info, or free it later
+or Create With specifc parameters [length, max, etc]
+#>
+Function Init-NativeString
+Function Parse-NativeString
+Function Free-NativeString
+
+<#
+Helper to Create Managed VARIANT Struct
+for x64 x68, and read the info, or free it later
+#>
+Function New-Variant
+Function Parse-Variant
+Function Free-Variant
+
+<#
+Helper to Managed GUID, From / TO:
+GUID <> IntPtr <> Byte's
+#>
+Function Guid-Handler
+
+<#
+Helper to Managed Privileges,
+For specifc hToken, [Process]
+Can Query Privileges, Adjust Privileges
+Or Adjust All Privileges, and Also
+give Account A specifc Privileges, like SeAssignPrimaryTokenPrivilege
+which normal user / Admin doesn't have 
+#>
+Function Adjust-TokenPrivileges
+
+<#
+Check Current Process Token, 
+if Belong to Administrators Group or is a System User
+or is it an elavated Process, using Sid, who is Build manully
+#>
+Function Check-AccountType
+
+<#
+NtCurrentTeb implantation in PS'1 code
+using 5 diffrent Way's, By ref, return, etc etc.
+and using 3 Types  option low level API [Proctect, Allocate, AllocateEx]
+And lot of ASM , And extra suppprt for specifc Special Location's:
+NtCurrentTeb, NtCurrentTeb->ClientID,Peb,Ldr,ProcessHeap,Parameters
+#>
+Function NtCurrentTeb
+
+<#
+Low level Api, for loading DLL, 
+As Data, Or `Not` Data,
+Also, implantate Get-DllHandle Function
+who is high level, and return pointer for loaded DLL only
+#>
+Function Ldr-LoadDll
+Function Get-DllHandle
+
+<#
+Read Loader api module, using low level way
+Read Process TEB-> LDR, And parse them in 3 way's
+"Load", "Memory", "Init"
+#>
+Function Get-LoadedModules
+
+<#
+Query Process using Low level Api call's
+And get basic info, PebBaseAddress, UniqueProcessId,
+InheritedFromUniqueProcessId, ImageFileName
+#>
+Function Query-Process
+
+<#
+Get Token Of user, who is logged in OR Not
+Using 2 Api, LogonUserExExW, LsaLogonUser
+with option to modify parametes like LogonType, TokenType
+LogonType->0x03, TokenType ->0x02 for example
+#>
+Function Obtain-UserToken
+
+<#
+Get Token From Service/Process/Process who is also Service
+With -Impersonat option in case of Duplicate Token
+#>
+Function Get-ProcessHelper
+Function Get-ProcessHandle
+
+<#
+Process a Token of diffrent user,
+to allow it to Run interactive window on Current User Desktop
+Using new Desktop\Vista or Current
+#>
+Function Process-UserToken
+
+<#
+Create Basic Process or advanced Process,
+Using User Token, Process Token, using High level & low level APi
+Also Support Duplicate / As Parent Method's [RunAsTi]
+Send-CsrClientCall, is a low level helper, to allow run Notepad for example
+on current desktop, otherwise, some Process will fail
+#>
+Function Invoke-Process
+Function Invoke-ProcessAsUser
+Function Invoke-NativeProcess
+Function Send-CsrClientCall
+
 
 ## Code samples
 Below are quick, high‑level samples showing the module's call patterns. These examples are non‑destructive and intended for documentation/demo use only.
