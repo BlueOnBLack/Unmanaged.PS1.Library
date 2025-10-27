@@ -1274,17 +1274,19 @@ Write-Host "Testing *** BOR CASE" -ForegroundColor Green
 Write-Host "WIN32 -bor HRESULT -bor NTSTATUS" -ForegroundColor Green
 Parse-ErrorMessage -log -MessageId 0x00030206 -Flags ([ErrorMessageType]::WIN32 -bor [ErrorMessageType]::NTSTATUS -bor [ErrorMessageType]::HRESULT)
 #>
-enum ErrorMessageType {
-    WIN32      = 1
-    NTSTATUS   = 2
-    ACTIVATION = 4
-    NETWORK    = 8
-    CBS        = 16
-    BITS       = 32
-    HTTP       = 64
-    UPDATE     = 128
-    HRESULT    = 256
-    ALL        = 511
+Enum ErrorMessageType {
+    ALL         = 0
+    WIN32       = 1
+    NTSTATUS    = 2
+    ACTIVATION  = 4
+    NETWORK     = 8
+    CBS         = 16
+    BITS        = 32
+    HTTP        = 64
+    UPDATE      = 128
+    HRESULT     = 256
+    WMI         = 512
+    OLE         = 1024
 }
 function Parse-MessageId {
     param (
@@ -1454,7 +1456,9 @@ function Parse-ErrorMessage {
                  [ErrorMessageType]::BITS       -bor `
                  [ErrorMessageType]::HTTP       -bor `
                  [ErrorMessageType]::UPDATE     -bor `
-                 [ErrorMessageType]::HRESULT
+                 [ErrorMessageType]::HRESULT    -bor `
+                 [ErrorMessageType]::WMI        -bor `
+                 [ErrorMessageType]::OLE
     }
     foreach ($Flag in [Enum]::GetValues([ErrorMessageType]) | Where-Object { $_ -ne [ErrorMessageType]::ALL }) {
             $isValueExist = ($Flags -band $flag) -eq $flag
@@ -1467,6 +1471,8 @@ function Parse-ErrorMessage {
                     ([ErrorMessageType]::HRESULT)      { $apiList += "KernelBase.dll","Kernel32.dll"}  #,"api-ms-win-core-synch-l1-2-0.dll" }
                     ([ErrorMessageType]::NTSTATUS)     { $apiList += "ntdll.dll" }
                     ([ErrorMessageType]::ACTIVATION)   { $apiList += "slc.dll", "sppc.dll"}
+                    ([ErrorMessageType]::WMI)          { $apiList += "wmiutils.dll", "wbemcore.dll", "wbemcntl.dll" }
+                    ([ErrorMessageType]::OLE)          { $apiList += "MSDAERR.dll" }
                 }
             }
     }
@@ -2582,7 +2588,7 @@ Function Init-SLC {
                 Parameters = @(
                     [IntPtr],                     # hSLC (HSLC handle)
                     [GUID].MakeByRefType(),       # pAppID (const SLID * - pass [IntPtr]::Zero or allocated GUID)
-                    [GUID].MakeByRefType(),       # pProductSkuId (const SLID * - pass [IntPtr]::Zero or allocated GUID)
+                    [IntPtr],                     # pProductSkuId (const SLID * - pass [IntPtr]::Zero or allocated GUID)
                     [IntPtr],                     # pwszRightName (PCWSTR - pass [IntPtr]::Zero for NULL)
                     [uint32].MakeByRefType(),     # pnStatusCount (UINT *)
                     [IntPtr].MakeByRefType()      # ppLicensingStatus (SL_LICENSING_STATUS **)
@@ -4704,6 +4710,23 @@ Invoke-ComInterface `
     -Params @('QPM6N-7J2WJ-P88HH-P3YRH-YY74H', 0, 1, 0)
 
 [Marshal]::ReleaseComObject($ComObj.Instance) | Out-Null
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
+# Alternative Way. [Call to A Specific Function] #
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
+
+Use-ComInterface `
+    -Clsid '17CCA47D-DAE5-4E4A-AC42-CC54E28F334A' `
+    -IID 'F2DCB80D-0670-44BC-9002-CD18688730AF' `
+    -Index 3 `
+    -Name ShowProductKeyUI
+
+Use-ComInterface `
+    -Clsid '17CCA47D-DAE5-4E4A-AC42-CC54E28F334A' `
+    -IID 'F2DCB80D-0670-44BC-9002-CD18688730AF' `
+    -Index 4 `
+    -Name UpdateOperatingSystemWithParams `
+    -Values @('QPM6N-7J2WJ-P88HH-P3YRH-YY74H', 0, 1, 0)
 #>
 function New-ComInterface {
     param(
@@ -11194,9 +11217,17 @@ $ApiMapList = @(
     "sppc.dll"
 
     # Network Management errors
-    "netmsg.dll",  # Network
-    "winhttp.dll", # HTTP SERVICE
-    "qmgr.dll"     # BITS
+    "netmsg.dll",   # Network
+    "winhttp.dll",  # HTTP SERVICE
+    "qmgr.dll",     # BITS
+
+    # WMI related DLL
+    "wmiutils.dll",
+    "wbemcore.dll",
+    "wbemcntl.dll",
+
+    # OLE related DLL
+    "MSDAERR.dll"
 )
 $baseMap = @{}
 $global:LoadedModules = Get-LoadedModules -SortType Memory | 
