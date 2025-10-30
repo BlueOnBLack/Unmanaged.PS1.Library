@@ -4,7 +4,7 @@
 [![PowerShell Gallery](https://img.shields.io/badge/PowerShell%20Module-PS1%20NativeInterop-blue.svg)]()
 
 > Managed COM / Win32 API bridge and utilities for PowerShell (PS1).  
-> High-level wrapper for advanced native interoperability and system inspection — intended for legitimate administrative, defensive, and research use.
+> High-level wrapper for advanced native interoperability and system inspection - intended for legitimate administrative, defensive, and research use.
 
 ## About
 `PS1.NativeInterop` is a PowerShell-focused library that exposes a set of managed wrappers and helpers to interact with native Windows APIs, COM interfaces, and low-level process information. The project is intended to aid system administrators, security researchers, and developers who need to inspect, diagnose, or automate system-level tasks from PowerShell.
@@ -63,6 +63,13 @@ Function Bor
 Extract Flags From `Flag` value
 #>
 Function Get-EnumFlags
+
+<#
+Just a little helper, 
+to convert String, or values into Sid
+or Print it later if needed
+#>
+function Sid-Helper
 
 <#
 Dump memory for view it later, with hex editior
@@ -252,7 +259,7 @@ Function Send-CsrClientCall
 ````
 
 ## Code samples
-Below are quick, high‑level samples showing the module's call patterns. These examples are non‑destructive and intended for documentation/demo use only.
+Below are quick, high-level samples showing the module's call patterns. These examples are non-destructive and intended for documentation/demo use only.
 
 ```powershell
 
@@ -332,4 +339,3 @@ $ret = Invoke-UnmanagedMethod `
     -Mode Protect -SysCall
 Free-NativeString -StringPtr $ObjectName
 write-host "NtCreateFile Test: $ret"
-
