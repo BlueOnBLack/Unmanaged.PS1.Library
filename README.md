@@ -264,7 +264,47 @@ Below are quick, high-level samples showing the module's call patterns. These ex
 ```powershell
 
 Clear-Host
-write-host
+Write-Host
+
+# Mode Token / User
+# Req` System Prev, And Also User/Pass Of High Prev Acc
+# Interactive Window will be avilible even on Normal User
+# Can be used with --> -VistaMode // DotNet, Api, Auto
+# Can be used with --> -SetVistaFlag -SetNewVista
+# can be used with --> -RemoveVistaAce, Only for cmd.exe // Aka Terminal
+Invoke-ProcessAsUser `
+    -Application 'conhost.exe' `
+    -UserName Administrator `
+    -Password 0444 `
+    -Mode Token `
+    -RunAsConsole `
+    -VistaMode DotNet `
+    -SetVistaFlag -SetNewVista
+
+# Can be used with Any User
+# VistaMode Not Applied to this Case !
+# Do not Set Flags Of 
+# -SetVistaFlag -SetNewVista -RemoveVistaAce
+Invoke-ProcessAsUser `
+    -Application 'cmd.exe' `
+    -CommandLine '/k whoami' `
+    -UserName 'Any_User' `
+    -Password 'Password' `
+    -Mode Logon `
+    -RunAsConsole
+
+# Logon+ Mode
+# Can be used with High Priv Acc Only
+# Low/High Pri Acc call high Priv Acc
+# Can be used with --> -VistaMode // DotNet, Api, Auto
+# Can be used with --> -SetVistaFlag -SetNewVista
+# can be used with --> -RemoveVistaAce, Only for cmd.exe // Aka Terminal
+Invoke-ProcessAsUser `
+    -Application 'notepad.exe' `
+    -UserName Administrator `
+    -Password 0444 `
+    -VistaMode Auto `
+    -Mode Hybrid
 
 # COM: show product key UI (no parameters)
 Use-ComInterface `
