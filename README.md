@@ -426,4 +426,24 @@ if (-not ([PSTypeName]'OBJECT_ATTRIBUTES').Type) {
         } | Out-Null
 }
 Print-Struct -StructType ('OBJECT_ATTRIBUTES')
+
+# Make sure to assigen SeAssignPrimaryTokenPrivilege Priv to Account
+$AssignPrivilege = Adjust-TokenPrivileges -Query | ? Name -match SeAssignPrimaryTokenPrivilege
+if (-not $AssignPrivilege) {
+    try {
+        if (Adjust-TokenPrivileges -Privilege SeAssignPrimaryTokenPrivilege -Account Administrator) {
+            Write-Host ""
+            Write-Host "Successfully applied 'SeAssignPrimaryTokenPrivilege' to the 'Administrator' account." -ForegroundColor Cyan
+            Write-Host "Please log off and log back in to apply the changes." -ForegroundColor Green
+            Write-Host ""
+        } else {
+            Write-Host ""
+            Write-Host "Failed to apply 'SeAssignPrimaryTokenPrivilege' to the 'Administrator' account." -ForegroundColor Red
+            Write-Host "Please check your permissions or the account status." -ForegroundColor Yellow
+            Write-Host ""
+        }
+    }
+    catch {}
+}
+Adjust-TokenPrivileges -Privilege SeAssignPrimaryTokenPrivilege -SysCall
 ````
