@@ -140,8 +140,10 @@ Function Invoke-ComInterface
 Helper to Create Full Structure, using Reflection
 Also with GetSize And Casting Support
 [Type]::GetSize(), [Type]$handle
+And Also print Struct Info.
 #>
 Function New-Struct
+Print-Struct
 
 <#
 Helper to Call any Win32 / Low level Api call,
@@ -256,6 +258,12 @@ Function Invoke-Process
 Function Invoke-ProcessAsUser
 Function Invoke-NativeProcess
 Function Send-CsrClientCall
+
+<#
+Impersonates a Windows token or reverts the current thread to self.
+Using Build In Option From, Process Name. ID, hToken
+#>
+Function Impersonate-Token
 ````
 
 ## Code samples
@@ -379,3 +387,43 @@ $ret = Invoke-UnmanagedMethod `
     -Mode Protect -SysCall
 Free-NativeString -StringPtr $ObjectName
 write-host "NtCreateFile Test: $ret"
+
+# From Logon / Process
+$hToken = Get-ProcessHelper -ProcessName lsass -AsToken $true
+#$hToken = Obtain-UserToken -UserName administrator -Password 0444 -impersonate
+Impersonate-Token -hToken $hToken
+# From Process, Auto Mode
+#Impersonate-Token -ProcessName lsass
+$regPath = 'HKLM:\SECURITY\Policy\Accounts'
+Get-ChildItem -Path $regPath -ErrorAction SilentlyContinue
+# Clean hToken Provide by user & From global:
+Impersonate-Token -Revert -Free
+Free-IntPtr $hToken -Method NtHandle
+
+# Mode [User], Req` *Act As System* Priv' [SeTcbPrivilege]
+# Interactive Window will be available even on Normal User
+# Usually Run from Service. Real one. Make Sure Run ISe AS System
+# Do not Set Flags Of -SetVistaFlag -SetNewVista -RemoveVistaAce
+Invoke-ProcessAsUser `
+    -Application 'cmd.exe' `
+    -CommandLine '/k whoami' `
+    -Mode User `
+    -RunAsConsole `
+    -RunAsActiveSession
+
+if (-not ([PSTypeName]'OBJECT_ATTRIBUTES').Type) {
+    $module = New-InMemoryModule -ModuleName "OBJECT_ATTRIBUTES"
+    New-Struct `
+        -Module $module `
+        -FullName "OBJECT_ATTRIBUTES" `
+        -StructFields @{
+            Length                   = New-Field 0 "UInt32"
+            RootDirectory            = New-Field 1 "IntPtr"  # HANDLE
+            ObjectName               = New-Field 2 "IntPtr"  # PUNICODE_STRING
+            Attributes               = New-Field 3 "UInt32"
+            SecurityDescriptor       = New-Field 4 "IntPtr"  # PVOID -> SECURITY_DESCRIPTOR
+            SecurityQualityOfService = New-Field 5 "IntPtr"  # PVOID -> SECURITY_QUALITY_OF_SERVICE
+        } | Out-Null
+}
+Print-Struct -StructType ('OBJECT_ATTRIBUTES')
+````
