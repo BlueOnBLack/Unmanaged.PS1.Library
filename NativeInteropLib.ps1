@@ -5321,6 +5321,74 @@ function New-Struct {
 }
 
 <#
+.SYNOPSIS
+
+An helper function to Print struct Info based on New-Struct Function
+
+.EXAMPLE
+
+if (-not ([PSTypeName]'OBJECT_ATTRIBUTES').Type) {
+    $module = New-InMemoryModule -ModuleName "OBJECT_ATTRIBUTES"
+
+    New-Struct `
+        -Module $module `
+        -FullName "OBJECT_ATTRIBUTES" `
+        -StructFields @{
+            Length                   = New-Field 0 "UInt32"
+            RootDirectory            = New-Field 1 "IntPtr"  # HANDLE
+            ObjectName               = New-Field 2 "IntPtr"  # PUNICODE_STRING
+            Attributes               = New-Field 3 "UInt32"
+            SecurityDescriptor       = New-Field 4 "IntPtr"  # PVOID -> SECURITY_DESCRIPTOR
+            SecurityQualityOfService = New-Field 5 "IntPtr"  # PVOID -> SECURITY_QUALITY_OF_SERVICE
+        } | Out-Null
+}
+Clear-Host
+Write-Host
+Print-Struct -StructType ('OBJECT_ATTRIBUTES')
+#>
+function Print-Struct {
+    param(
+        [Parameter(Mandatory=$true)]
+        [Type]$StructType
+    )
+
+    $size = [Marshal]::SizeOf([Type]$StructType)
+    Write-Host ("Size: {0} bytes" -f $size) -ForegroundColor Green
+    Write-Host ("Name: {0}" -f $StructType.Name) -ForegroundColor Green
+
+    $fieldData = @()
+    foreach ($field in $StructType.GetFields()) {
+        $offset = [Marshal]::OffsetOf($StructType, $field.Name)
+    
+        $fieldData += [PSCustomObject]@{
+            FieldName = $field.Name
+            OffsetHex = "0x{0:X2}" -f $offset.ToInt32()
+            OffsetDec = $offset.ToInt32()
+            DataType  = $field.FieldType.Name
+        }
+    }
+
+    $fieldData | Format-Table -AutoSize -Property @{
+        Label = 'Field Name'
+        Expression = {$_.FieldName}
+    }, @{
+        Label = 'Data Type'
+        Expression = {$_.DataType}
+        Alignment = 'Center'
+    }, @{
+        Label = 'Offset (H)'
+        Expression = {$_.OffsetHex}
+        Alignment = 'Center'
+    }, @{
+        Label = 'Offset (D)'
+        Expression = {"{0:N0}" -f $_.OffsetDec}
+        Alignment = 'Center'
+    }
+
+    Write-Host
+}
+
+<#
 
      *********************
 
@@ -9564,7 +9632,9 @@ Function Obtain-UserToken {
         [ValidateSet("LogonUserExExW", "LsaLogonUser")]
         [String] $Method = "LogonUserExExW",
 
-        [switch] $LoadProfile
+        [switch] $LoadProfile,
+        [switch] $impersonate
+
     )
 
     try {
@@ -9628,13 +9698,13 @@ Function Obtain-UserToken {
 
         # Duplicate token to Primary
         $hToken = [IntPtr]0
-        
+        $TokenType = if ($impersonate) {0x02} else {0x01}
         $ret = $USER::NtDuplicateToken(
             $phToken,      # [in] Existing Token Handle
             0xF01FF,       # [in] DesiredAccess (TOKEN_ALL_ACCESS)
             [IntPtr]0,     # [in] ObjectAttributes (NULL)
             0x00,          # [in] BOOLEAN EffectiveOnly (FALSE)
-            0x01,          # [in] TOKEN_TYPE (TokenPrimary)
+            $TokenType,    # [in] TOKEN_TYPE (TokenPrimary)
             ([ref]$hToken) # [out] New Token Handle
         )
 
@@ -9645,7 +9715,7 @@ Function Obtain-UserToken {
                 $MinimumFlags,   # [in] DesiredAccess (TOKEN_ALL_ACCESS)
                 [IntPtr]0,       # [in] ObjectAttributes (NULL)
                 0x00,            # [in] BOOLEAN EffectiveOnly (FALSE)
-                0x01,            # [in] TOKEN_TYPE (TokenPrimary)
+                $TokenType,      # [in] TOKEN_TYPE (TokenPrimary)
                 ([ref]$hToken)   # [out] New Token Handle
             )
 
@@ -10095,7 +10165,9 @@ function Get-ProcessHandle {
         [int]    $ProcessId,
         [string] $ProcessName,
         [string] $ServiceName,
-        [switch] $Impersonat
+        [bool]   $Impersonat = $false,
+        [bool]   $AsToken = $false
+
     )
 
     $scManager = $tiService = [IntPtr]::Zero
@@ -10129,7 +10201,7 @@ function Get-ProcessHandle {
                 )
             }
 
-            if (!$Impersonat) {
+            if (!$Impersonat -and !$AsToken) {
                 return $handle
             }
             $tokenHandle = [IntPtr]::Zero
@@ -10150,6 +10222,11 @@ function Get-ProcessHandle {
                 throw "NtOpenProcessToken failue .!"
             }
 
+            if ($AsToken) {
+                Write-Warning "Return Token Handle"
+                return $tokenHandle
+            }
+
             # Impersonate the user
             if (!(Invoke-UnmanagedMethod -Dll Advapi32 -Function ImpersonateLoggedOnUser -Return bool -Values @($tokenHandle))) {
                 throw "ImpersonateLoggedOnUser failed.!"
@@ -10165,6 +10242,7 @@ function Get-ProcessHandle {
             Free-IntPtr -handle $tokenHandle -Method NtHandle
 
             $null = $Global:kernel32::RevertToSelf()
+            Write-Warning "Return Duplicate Token Handle"
             return $NewTokenHandle
         }
         finally {
@@ -10271,7 +10349,8 @@ Function Get-ProcessHelper {
             [int]    $ProcessId,
             [string] $ProcessName,
             [string] $ServiceName,
-            [bool]   $Impersonat
+            [bool]   $Impersonat = $false,
+            [bool]   $AsToken = $false
         )
     <#
         Work with this Services:
@@ -10286,7 +10365,7 @@ Function Get-ProcessHelper {
         like Amd* GoodSync, etc, can be easyly use too.
 
     #>
-
+    $status = [IntPtr]::Zero
     if ($ProcessName) {
         $Service = Get-CimInstance -ClassName Win32_Service -Filter "PathName LIKE '%$($ProcessName).exe%'" | Select-Object -Last 1
     }
@@ -10294,14 +10373,9 @@ Function Get-ProcessHelper {
         $Service = Get-CimInstance -ClassName Win32_Service -Filter "name = '$ServiceName'" | Select-Object -Last 1
     }
     if ($Service) {
-                
         if ($Service.state -eq 'Running') {
             $ProcessId = [Int32]::Parse($Service.ProcessId)
-            if ($Impersonat) {
-                return Get-ProcessHandle -ProcessId $ProcessId -Impersonat
-            } else {
-                return Get-ProcessHandle -ProcessId $ProcessId
-            }
+            $status = Get-ProcessHandle -ProcessId $ProcessId -Impersonat $Impersonat -AsToken $AsToken
         }
         else {
             # Managed Code fail to get handle,
@@ -10309,20 +10383,13 @@ Function Get-ProcessHelper {
             # so, i have to call function twice
             # instead, this, work on first place.!
             $ServiceName = $Service.Name
-            if ($Impersonat) {
-                return Get-ProcessHandle -ServiceName $ServiceName -Impersonat
-            } else {
-                return Get-ProcessHandle -ServiceName $ServiceName
-            }
+            $status = Get-ProcessHandle -ServiceName $ServiceName -Impersonat $Impersonat -AsToken $AsToken
         }
     } 
     elseif ($ProcessName) {
-        if ($Impersonat) {
-            return Get-ProcessHandle -ProcessName $ProcessName -Impersonat
-        } else {
-            return Get-ProcessHandle -ProcessName $ProcessName
-        }
+        $status = Get-ProcessHandle -ProcessName $ProcessName -Impersonat $Impersonat -AsToken $AsToken
     }
+    return $status
 }
 
 <#
@@ -10452,6 +10519,17 @@ Invoke-ProcessAsUser `
     -Password 0444 `
     -VistaMode Auto `
     -Mode Hybrid
+
+# Mode [User], Req` *Act As System* Priv' [SeTcbPrivilege]
+# Interactive Window will be available even on Normal User
+# Usually Run from Service. Real one. Make Sure Run ISe AS System
+# Do not Set Flags Of -SetVistaFlag -SetNewVista -RemoveVistaAce
+Invoke-ProcessAsUser `
+    -Application 'cmd.exe' `
+    -CommandLine '/k whoami' `
+    -Mode User `
+    -RunAsConsole `
+    -RunAsActiveSession
 
 <#
 Invoke-ProcessAsUser `
@@ -10708,34 +10786,87 @@ Function Invoke-ProcessAsUser {
         [String] $Password,
         [String] $Domain,
 
+        # Primary, As Default
         [Int32]  $TokenType  = 0x01,
+
+        # 0x02, As Default, 0x03 is Also good option 
         [Int32]  $LogonType  = 0x02,
+
+        # 0x01, As Default, 0x02 is Also good option 
         [Int32]  $LogonFlags = 0x01,
 
-        [Parameter(Mandatory=$false)]
         [AuthenticationMode] $Mode = [AuthenticationMode]::Logon,
-
-        [Parameter(Mandatory=$false)]
         [VistaMode] $VistaMode = [VistaMode]::Auto,
 
         [ValidateSet("LogonUserExExW", "LsaLogonUser")]
         [String] $Method = "LogonUserExExW",
 
-        [Parameter(Mandatory=$false)]
-        [switch] $RunAsConsole,
-
-        [Parameter(Mandatory=$false)]
         [switch] $LoadProfile,
+        [switch] $RunAsConsole,
+        [switch] $RunAsActiveSession,
 
-        [Parameter(Mandatory=$false)]
         [switch] $SetVistaFlag,
-
-        [Parameter(Mandatory=$false)]
         [switch] $SetNewVista,
-
-        [Parameter(Mandatory=$false)]
         [switch] $RemoveVistaAce
     )
+
+    try {
+        $Module = [AppDomain]::CurrentDomain.GetAssemblies()| ? { $_.ManifestModule.ScopeName -eq "SESSION" } | select -Last 1
+        $SESSION = $Module.GetTypes()[0]
+    }
+    catch {
+        $Module = [AppDomain]::CurrentDomain.DefineDynamicAssembly("null", 1).DefineDynamicModule("Token", $False).DefineType("null")
+        @(
+            @('WTSGetActiveConsoleSessionId', 'Kernel32.dll', [int],    @()),
+            @('WTSQueryUserToken',            'Wtsapi32.dll', [Bool],   @([Uint32], [IntPtr].MakeByRefType())),
+            @('WinStationQueryInformationW',  'Winsta.dll',   [Bool],   @([Int32], [Int32], [Int32], [IntPtr], [Int32], [Int32].MakeByRefType()))
+        ) | % {
+            $Module.DefinePInvokeMethod(($_[0]), ($_[1]), 22, 1, [Type]($_[2]), [Type[]]($_[3]), 1, 3).SetImplementationFlags(128) # Def` 128, fail-safe 0 
+        }
+        $SESSION = $Module.CreateType()
+        Start-Sleep -Milliseconds 400
+    }
+
+    Function Get-ActiveLoginToken {
+
+        $pebPtr = NtCurrentTeb -Peb
+        $sharedDataPtr = [Marshal]::ReadIntPtr($pebPtr, 0x90)
+        $sessionId = if (IsValid-IntPtr $sharedDataPtr) {
+            # Process Environment Block (PEB), 0x90, PVOID SharedData;
+            [Marshal]::ReadInt32($sharedDataPtr, 0x04)
+        }
+        else {
+            # NTDLL, KUSER_SHARED_DATA, 000002D8 ActiveConsoleId dd ?
+            [Marshal]::ReadInt32(
+                [IntPtr]::Add(0x7FFE0000, 0x000002D8))
+        }
+
+        $Length    = 0x00
+        $Buffer    = New-IntPtr -Size 0x18
+        $ClientID  = NtCurrentTeb -ClientID
+        $hProc     = [Marshal]::ReadIntPtr($ClientID, 0x00)
+        $hThread   = [Marshal]::ReadIntPtr($ClientID, 0x08)
+        [Marshal]::WriteIntPtr($Buffer, 0x00, $hProc)
+        [Marshal]::WriteIntPtr($Buffer, 0x08, $hThread)
+        try {
+            [Bool]$ret = $SESSION::WinStationQueryInformationW(
+                    0x00,          # SERVERNAME_CURRENT, 0
+                    $sessionId,    # SessionID (Not LOGONID_CURRENT !)
+                    0xE,           # WINSTATIONINFOCLASS, WinStationUserToken, 14
+                    $Buffer,       # PVOID pWinStationInformation, [In & Out]
+                    0x18,          # ULONG WinStationInformationLength, 24
+                    [ref]$Length   # PULONG pReturnLength, [Out Only]
+                )
+            if ($ret) {
+                $pToken = [Marshal]::ReadIntPtr($Buffer, 0x10)
+                return $pToken
+            }
+            return [IntPtr]::Zero
+        }
+        finally {
+            Free-IntPtr $Buffer
+        }
+    }
 
     <#
     Custom Dll based on logue project.
@@ -10775,6 +10906,17 @@ Function Invoke-ProcessAsUser {
     @ Coerced potato
     # https://github.com/Prepouce/CoercedPotato
     #>
+
+    $CheckArgs = -not $RunAsActiveSession.IsPresent -and [String]::IsNullOrEmpty($UserName)
+    if ($CheckArgs) {
+        Write-Warning "User Must provide -UserName '' or Use -RunAsActiveSession"
+        return
+    }
+
+    if ($RunAsActiveSession -and $Mode -ne 0x02) {
+        Write-Warning "-RunAsActiveSession Is Active, Change AuthenticationMode to User/0x02"
+        $mode = [AuthenticationMode]::User
+    }
     
     try {
         $hProcess, $hThread = [IntPtr]0, [IntPtr]0
@@ -10810,7 +10952,24 @@ Function Invoke-ProcessAsUser {
             Adjust-TokenPrivileges -Privilege SeDebugPrivilege | Out-Null
         }
         catch {}
-        if ($LoadProfile) {
+
+        if ($RunAsActiveSession) {
+            
+            #$hToken = [IntPtr]::Zero
+            #$SessionId = $SESSION::WTSGetActiveConsoleSessionId()
+            #[Bool]$ret = $SESSION::WTSQueryUserToken($SessionId, [ref]$hToken)
+
+            # New Version
+            $hToken = Get-ActiveLoginToken
+            
+            # Validate Results
+            if (-not (IsValid-IntPtr $hToken)) {
+                $SeTcbPrivilege = [Bool](Adjust-TokenPrivileges -Query | ? Name -EQ SeTcbPrivilege)
+                write-warning "WTSGetActiveConsoleSessionId End with { hToken: $hToken, SessionId: $SessionId, SeTcbPrivilege: $SeTcbPrivilege}"
+                return
+            }
+        }
+        elseif ($LoadProfile) {
             $hToken = Obtain-UserToken `
                 -UserName $UserName `
                 -Password $Password `
@@ -10922,7 +11081,7 @@ Function Invoke-ProcessAsUser {
             )
 
         } elseif ($Mode -eq 0x00) {
-            
+            $hInfo = $null
             # Adjust Integrity Level for $hToken
             Adjust-IntegrityLevel $hToken
 
@@ -10932,7 +11091,6 @@ Function Invoke-ProcessAsUser {
             } else {
                 $hInfo = Process-UserToken -hToken $hToken -Mode $VistaMode -UseCurrent
             }
-
             # Call internally to Advapi32->CreateProcessWithLogonCommonW->RPC call
             $homeDrive = [marshal]::StringToCoTaskMemUni("c:\")
             $ret = $Global:advapi32::CreateProcessWithTokenW(
@@ -10950,29 +11108,33 @@ Function Invoke-ProcessAsUser {
             }
 
         } elseif ($Mode -eq 0x02) {
-
-            $AssignPrivilege = Adjust-TokenPrivileges -Query | ? Name -match SeAssignPrimaryTokenPrivilege
-            if (!(Check-AccountType -AccType System) -or -not $AssignPrivilege) {
-                if (-not $AssignPrivilege) {        
-                    Write-Warning "Missing Priv, {SeAssignPrimaryTokenPrivilege}, Could fail if not system Account .!"
-                    Write-Warning "Call -> Adjust-TokenPrivileges -Privilege SeAssignPrimaryTokenPrivilege -Account `$env:USERNAME"
-                    #return $false
-                }
-            }
-
-            # Adjust Integrity Level for $hToken
-            Adjust-IntegrityLevel $hToken
-            
-            # Prefere hToken for current User
-            if ($SetNewVista) {
-                $hInfo = Process-UserToken -hToken $hToken -Mode $VistaMode
+            $hInfo = $null
+            if ($RunAsActiveSession) {
+                # System handle, nothing to modify
             } else {
-                $hInfo = Process-UserToken -hToken $hToken -Mode $VistaMode -UseCurrent
-            }
+                $AssignPrivilege = Adjust-TokenPrivileges -Query | ? Name -match SeAssignPrimaryTokenPrivilege
+                if (!(Check-AccountType -AccType System) -or -not $AssignPrivilege) {
+                    if (-not $AssignPrivilege) {        
+                        Write-Warning "Missing Priv, {SeAssignPrimaryTokenPrivilege}, Could fail if not system Account .!"
+                        Write-Warning "Call -> Adjust-TokenPrivileges -Privilege SeAssignPrimaryTokenPrivilege -Account `$env:USERNAME"
+                        #return $false
+                    }
+                }
+
+                # Adjust Integrity Level for $hToken
+                Adjust-IntegrityLevel $hToken
             
-            # Impersonate the user
-            if (!(Invoke-UnmanagedMethod -Dll Advapi32 -Function ImpersonateLoggedOnUser -Return bool -Values @($hToken))) {
-                throw "ImpersonateLoggedOnUser failed.!"
+                # Prefere hToken for current User
+                if ($SetNewVista) {
+                    $hInfo = Process-UserToken -hToken $hToken -Mode $VistaMode
+                } else {
+                    $hInfo = Process-UserToken -hToken $hToken -Mode $VistaMode -UseCurrent
+                }
+            
+                # Impersonate the user
+                if (!(Invoke-UnmanagedMethod -Dll Advapi32 -Function ImpersonateLoggedOnUser -Return bool -Values @($hToken))) {
+                    throw "ImpersonateLoggedOnUser failed.!"
+                }
             }
 
             # Call internally to Advapi32->Kernel32->KernelBase->CreateProcessAsUserW->CreateProcessInternalW
@@ -11702,6 +11864,203 @@ function Send-CsrClientCall {
         $pbiPtr = $unicodeBuf = $FileInfoPtr = $null
         $baseApiMsg = $AssemblyName = $FallBacks = $null
     }
+}
+
+<#
+.SYNOPSIS
+
+Impersonates a Windows token or reverts the current thread to self.
+
+.EXAMPLE
+
+Clear-Host
+Write-Host
+
+# From Logon / Process
+#$hToken = Get-ProcessHelper -ProcessName lsass -AsToken $true
+#$hToken = Obtain-UserToken -UserName administrator -Password 0444 -impersonate
+#Impersonate-Token -hToken $hToken
+
+# From Process, Auto Mode
+Impersonate-Token -ProcessName lsass
+
+$regPath = 'HKLM:\SECURITY\Policy\Accounts'
+$subKeys = Get-ChildItem -Path $regPath -ErrorAction SilentlyContinue
+
+foreach ($key in $subKeys) {
+    Write-Host "SubKey: $($key.Name)"
+    # Enumerate all values under each subkey
+    $values = Get-ItemProperty -Path $key.PSPath -ErrorAction SilentlyContinue
+    $values.PSObject.Properties | ForEach-Object {
+        Write-Host "    $($_.Name) = $($_.Value)"
+    }
+}
+
+# Clean hToken Provide by user & From global:
+Impersonate-Token -Revert -Free
+Free-IntPtr $hToken -Method NtHandle
+#>
+Function Impersonate-Token {
+    param (
+        [IntPtr]$hToken = [IntPtr]::Zero,
+        [int32]$ProcessID = 0,
+        [string]$ProcessName,
+        [switch]$Revert,
+        [switch]$Free
+    )
+
+    try {
+        $Module = [AppDomain]::CurrentDomain.GetAssemblies()| ? { $_.ManifestModule.ScopeName -eq "TOKEN_NEW" } | select -Last 1
+        $TOKEN_NEW = $Module.GetTypes()[0]
+    }
+    catch {
+        $Module = [AppDomain]::CurrentDomain.DefineDynamicAssembly("null", 1).DefineDynamicModule("TOKEN_NEW", $False).DefineType("null")
+        @(
+            @('null', 'null', [int], @()), # place holder
+            @('NtDuplicateToken',        'ntdll.dll',  [int32], @([IntPtr], [Int], [IntPtr], [Int], [Int], [IntPtr].MakeByRefType())),
+            @('NtQueryInformationToken', 'ntdll.dll',  [int32], @([IntPtr], [Int32], [Int32].MakeByRefType(), [Int32], [Int32].MakeByRefType()))
+        ) | % {
+            $Module.DefinePInvokeMethod(($_[0]), ($_[1]), 22, 1, [Type]($_[2]), [Type[]]($_[3]), 1, 3).SetImplementationFlags(128) # Def` 128, fail-safe 0 
+        }
+        $TOKEN_NEW = $Module.CreateType()
+    }
+
+    if ($ProcessID -eq 0 -and [string]::IsNullOrEmpty($ProcessName) -and !(IsValid-IntPtr $hToken)) {
+        $Revert = $true
+    }
+
+    if ($Revert) {
+        $Status = Invoke-UnmanagedMethod `
+            -Dll 'ntdll.dll' `
+            -Function 'NtSetInformationThread' `
+            -Values @(
+                [IntPtr]::new(-2),
+                0x05,                                   
+                [ref]$hToken,
+                0x08
+            )
+        if ($Free) {
+            Free-IntPtr $global:Token_
+            $global:Token_ = 0x0
+        }
+        return (
+            $Status -ge 0
+        )
+    }
+
+    if (!(IsValid-IntPtr $hToken)) {
+        if ($ProcessID -gt 0) {
+            $hToken = Get-ProcessHelper -ProcessId $ProcessID -AsToken $true
+        } elseif (-not [String]::IsNullOrEmpty($ProcessName)) {
+            $hToken = Get-ProcessHelper -ProcessName $ProcessName -AsToken $true
+        }
+        if (!(IsValid-IntPtr $hToken)) {
+            Write-Warning "Fail to get Token From process .!"
+            return $false
+        }
+
+        $global:Token_ = $hToken
+    }
+
+    if (-not ([PSTypeName]'OBJECT_ATTRIBUTES').Type) {
+        $module = New-InMemoryModule -ModuleName "OBJECT_ATTRIBUTES"
+
+        New-Struct `
+            -Module $module `
+            -FullName "OBJECT_ATTRIBUTES" `
+            -StructFields @{
+                Length                   = New-Field 0 "UInt32"
+                RootDirectory            = New-Field 1 "IntPtr"  # HANDLE
+                ObjectName               = New-Field 2 "IntPtr"  # PUNICODE_STRING
+                Attributes               = New-Field 3 "UInt32"
+                SecurityDescriptor       = New-Field 4 "IntPtr"  # PVOID -> SECURITY_DESCRIPTOR
+                SecurityQualityOfService = New-Field 5 "IntPtr"  # PVOID -> SECURITY_QUALITY_OF_SERVICE
+            } | Out-Null
+    }
+    #Write-Host
+    #Print-Struct -StructType ('OBJECT_ATTRIBUTES')
+
+    if (-not ([PSTypeName]'SECURITY_QUALITY_OF_SERVICE').Type) {
+        $module = New-InMemoryModule -ModuleName "SECURITY_QUALITY_OF_SERVICE"
+
+        New-Struct `
+            -Module $module `
+            -FullName "SECURITY_QUALITY_OF_SERVICE" `
+            -StructFields @{
+                Length              = New-Field 0 "UInt32"  # DWORD
+                ImpersonationLevel  = New-Field 1 "UInt32"  # SECURITY_IMPERSONATION_LEVEL
+                ContextTrackingMode = New-Field 2 "Byte"    # SECURITY_CONTEXT_TRACKING_MODE
+                EffectiveOnly       = New-Field 3 "Byte"    # BOOLEAN
+            } | Out-Null
+    }
+    #Write-Host
+    #Print-Struct -StructType ('SECURITY_QUALITY_OF_SERVICE')
+    $FreeToken = $false
+    $TokenInformation = 0x00
+    $ReturnLength     = 0x00
+    $status = $TOKEN_NEW::NtQueryInformationToken(
+        $hToken,
+        0x08,
+        [ref]$TokenInformation, 0x04, 
+        [ref]$ReturnLength
+    )
+    if ( $status -lt 0x00 ) {
+        return $false
+    }
+
+    if ($TokenInformation -eq 1) {
+        $Attribute = [Activator]::CreateInstance('OBJECT_ATTRIBUTES')
+        $Security  = [Activator]::CreateInstance('SECURITY_QUALITY_OF_SERVICE')
+        $Security.Length = 12              # v11[0] = 12; // SizeOf
+        $Security.ImpersonationLevel  = 2  # v11[1] = 2;
+        $Security.ContextTrackingMode = 1  # v12 = 1;
+        $Security.EffectiveOnly       = 0
+    
+        $SecurityPtr = New-IntPtr -Size 12
+        [marshal]::StructureToPtr($Security, $SecurityPtr, $true)
+        $Attribute.Length = 48             # ObjectAttributes.Length = 48; // SizeOf
+        $Attribute.SecurityQualityOfService = $SecurityPtr
+
+        $AttributePtr = New-IntPtr -Size 48
+        [marshal]::StructureToPtr($Attribute, $AttributePtr, $true)
+
+        $ThreadInformation = [IntPtr]::Zero
+        $status = $TOKEN_NEW::NtDuplicateToken(
+                $hToken, 0xC,
+                $AttributePtr,
+                0,2,
+                [ref]$ThreadInformation
+            )
+            $hToken = [IntPtr]($ThreadInformation)
+            $FreeToken = $True
+
+        try {
+            if ( $status -lt 0x00 ) {
+                return $false
+            }
+        }
+        finally {
+            Free-IntPtr $SecurityPtr
+            Free-IntPtr $AttributePtr
+        }
+    }
+
+    $Status = Invoke-UnmanagedMethod `
+        -Dll 'ntdll.dll' `
+        -Function 'NtSetInformationThread' `
+        -Values @(
+            [IntPtr]::new(-2),
+            0x05,                                   
+            [ref]$hToken,
+            0x08
+        )
+    if ($FreeToken) {
+        Free-IntPtr $hToken -Method NtHandle
+    }
+
+    return (
+        $Status -ge 0
+    )
 }
 
 # work - job Here.
