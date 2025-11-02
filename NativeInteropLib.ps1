@@ -32,6 +32,7 @@ if (!([PSTypeName]'NtCoreLib.NtToken').Type) {
     Write-warning 'NtObjectManager types cant be found!'
 }
 
+#region "MESSAGE"
 <#
 wuerror.h
 https://github.com/larsch/wunow/blob/master/wunow/WUError.cs
@@ -2005,7 +2006,9 @@ function Parse-ErrorFacility {
 
     return [HRESULT_Facility]::FACILITY_UNKNOWN
 }
+#endregion
 
+#region "HELPERS"
 <#
 .SYNOPSIS
 
@@ -2055,7 +2058,9 @@ function Get-EnumFlags {
         }
     }
 }
+#endregion
 
+#region "SID"
 <#
 .SYNOPSIS
 Just a little helper, 
@@ -2316,7 +2321,9 @@ $val_5,$val_6,$val_7,$val_8,    # a3: SubAuthority 4..7
         return $null
     }
 }
+#endregion
 
+#region "PTR"
 # WIN32 API Parts
 function Dump-MemoryAddress {
     param (
@@ -2577,7 +2584,9 @@ function Free-IntPtr {
     $handle = $null
     $ptrToFree = 0
 }
+#endregion
 
+#region "DLL"
 # DLL Loader
 function Register-NativeMethods {
     param (
@@ -3314,7 +3323,9 @@ Function Init-PIDGENX {
     )
     return Register-NativeMethods $functions -ImplAttributes ([MethodImplAttributes]::IL)
 }
+#endregion
 
+#region "INVOKE_SHARED_CODE"
 <#
 
      *********************
@@ -4319,7 +4330,9 @@ function Convert-RVAToFileOffset([int]$Rva, [PSObject[]]$SectionHeaders) {
         $Handle.Free()
     }
 }
+#endregion
 
+#region "COM_V1"
 <#
 
      *********************
@@ -4934,7 +4947,9 @@ function Use-ComInterface {
         $comObj | Release-ComObject
     }
 }
+#endregion
 
+#region "COM_V2"
 <#
 .SYNOPSIS
 
@@ -5070,7 +5085,9 @@ function Invoke-ComInterface {
         }
     }
 }
+#endregion
 
+#region "STRUCT"
 <#
 .SYNOPSIS
 
@@ -5148,6 +5165,27 @@ write-host "Parse-NativeString : $($stringInfo | select -ExpandProperty StringDa
 $string = [marshal]::PtrToStructure($stringPtr, [Type][UNICODE_STRING])
 write-host "PtrToStructure     : $([Marshal]::PtrToStringUni($string.Buffer))" -ForegroundColor Green
 Free-NativeString -StringPtr $stringPtr
+
+~~~~~~~~~~~~~~~~~~~~~ @ ~~~~~~~~~~~~~~~~~ # ~~~~~~~~~
+
+if (-not ([PSTypeName]'OBJECT_ATTRIBUTES').Type) {
+    $module = New-InMemoryModule -ModuleName "OBJECT_ATTRIBUTES"
+
+    New-Struct `
+        -Module $module `
+        -FullName "OBJECT_ATTRIBUTES" `
+        -StructFields @{
+            Length                   = New-Field 0 "UInt32"
+            RootDirectory            = New-Field 1 "IntPtr"  # HANDLE
+            ObjectName               = New-Field 2 "IntPtr"  # PUNICODE_STRING
+            Attributes               = New-Field 3 "UInt32"
+            SecurityDescriptor       = New-Field 4 "IntPtr"  # PVOID -> SECURITY_DESCRIPTOR
+            SecurityQualityOfService = New-Field 5 "IntPtr"  # PVOID -> SECURITY_QUALITY_OF_SERVICE
+        } | Out-Null
+}
+Clear-Host
+Write-Host
+Print-Struct -StructType ('OBJECT_ATTRIBUTES')
 #>
 function New-InMemoryModule {
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '')]
@@ -5319,33 +5357,6 @@ function New-Struct {
 
     $StructBuilder.CreateType()
 }
-
-<#
-.SYNOPSIS
-
-An helper function to Print struct Info based on New-Struct Function
-
-.EXAMPLE
-
-if (-not ([PSTypeName]'OBJECT_ATTRIBUTES').Type) {
-    $module = New-InMemoryModule -ModuleName "OBJECT_ATTRIBUTES"
-
-    New-Struct `
-        -Module $module `
-        -FullName "OBJECT_ATTRIBUTES" `
-        -StructFields @{
-            Length                   = New-Field 0 "UInt32"
-            RootDirectory            = New-Field 1 "IntPtr"  # HANDLE
-            ObjectName               = New-Field 2 "IntPtr"  # PUNICODE_STRING
-            Attributes               = New-Field 3 "UInt32"
-            SecurityDescriptor       = New-Field 4 "IntPtr"  # PVOID -> SECURITY_DESCRIPTOR
-            SecurityQualityOfService = New-Field 5 "IntPtr"  # PVOID -> SECURITY_QUALITY_OF_SERVICE
-        } | Out-Null
-}
-Clear-Host
-Write-Host
-Print-Struct -StructType ('OBJECT_ATTRIBUTES')
-#>
 function Print-Struct {
     param(
         [Parameter(Mandatory=$true)]
@@ -5387,7 +5398,9 @@ function Print-Struct {
 
     Write-Host
 }
+#endregion
 
+#region "API"
 <#
 
      *********************
@@ -6163,7 +6176,9 @@ function Invoke-UnmanagedMethod {
         $apiObj | Release-ApiObject
     }
 }
+#endregion
 
+#region "NATIVE_STRING"
 <#
 .HELPERS 
 
@@ -6414,7 +6429,9 @@ function Manage-UnicodeString {
         3) -unicodeStringPtr and -Release to free the string."
     }
 }
+#endregion
 
+#region "Variant"
 <#
 .HELPERS 
 
@@ -6649,7 +6666,9 @@ function Free-Variant {
     }
     [Marshal]::FreeHGlobal($variantPtr)
 }
+#endregion
 
+#region "GUID"
 <#
   A utility function for generating, converting, and comparing GUIDs.
   Supports conversions between GUID, ByteArray, and Pointer formats.
@@ -6819,7 +6838,13 @@ function Guid-Handler {
         }
     }
 }
+#endregion
 
+#region "Misc"
+# Just a Place holder
+#endregion
+
+#region "Privileges"
 <#
 Adjusting Token Privileges in PowerShell
 https://www.leeholmes.com/adjusting-token-privileges-in-powershell/
@@ -7406,7 +7431,9 @@ Function Adjust-TokenPrivileges {
         Free-IntPtr -handle $hToken -Method NtHandle
     }
 }
+#endregion
 
+#region "Account"
 <#
 SID structure (winnt.h)
 https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-sid
@@ -7733,7 +7760,9 @@ function IsElavated {
   [Marshal]::FreeHGlobal($pSid)
   return $isMember
 }
+#endregion
 
+#region "TEB_PEB"
 <#
 * Thread Environment Block (TEB)
 * https://www.geoffchappell.com/studies/windows/km/ntoskrnl/inc/api/pebteb/teb/index.htm
@@ -8415,7 +8444,9 @@ Function NtCurrentTeb {
         }
     }
 }
+#endregion
 
+#region "Modules"
 <#
     LdrLoadDll Data Convert Helper
     ------------------------------
@@ -9072,7 +9103,9 @@ function Get-DllHandle {
 
     return [IntPtr]::Zero
 }
+#endregion
 
+#region "Process_Helpers"
 if (!([PSTypeName]'TokenHelper').Type) {
         $tokenHelperCode = @'
 using System;
@@ -10391,7 +10424,9 @@ Function Get-ProcessHelper {
     }
     return $status
 }
+#endregion
 
+#region "Process_INVOKE"
 <#
 Privilege Escalation
 https://www.ired.team/offensive-security/privilege-escalation
@@ -10464,6 +10499,7 @@ if (-not $AssignPrivilege) {
     }
     catch {}
 }
+Adjust-TokenPrivileges -Privilege SeAssignPrimaryTokenPrivilege -SysCall
 
 Invoke-Process `
     -CommandLine "cmd /k echo Hello From TrustedInstaller && whoami" `
@@ -10476,9 +10512,6 @@ Invoke-Process `
     -ProcessName winlogon `
     -RunAsConsole `
     -UseDuplicatedToken
-
-Clear-Host
-Write-Host
 
 # Mode Token / User
 # Req` System Prev, And Also User/Pass Of High Prev Acc
@@ -10530,62 +10563,6 @@ Invoke-ProcessAsUser `
     -Mode User `
     -RunAsConsole `
     -RunAsActiveSession
-
-<#
-Invoke-ProcessAsUser `
-    -Application 'conhost.exe' `
-    -UserName Administrator `
-    -Password 0444 `
-    -Mode $AuthMode `
-    -VistaMode DotNet `
-    -RunAsConsole `
-    -SetVistaFlag -SetNewVista
-
-Invoke-ProcessAsUser `
-    -Application 'cmd.exe' `
-    -UserName Administrator `
-    -Password 0444 `
-    -Mode $AuthMode `
-    -VistaMode DotNet `
-    -RunAsConsole `
-    -SetVistaFlag -SetNewVista
-
-Invoke-ProcessAsUser `
-    -Application 'notepad.exe' `
-    -UserName Administrator `
-    -Password 0444 `
-    -Mode $AuthMode `
-    -VistaMode DotNet `
-    -RunAsConsole `
-    -SetVistaFlag -SetNewVista
-#>
-
-<#
-Invoke-ProcessAsUser `
-    -Application 'conhost.exe' `
-    -UserName Administrator `
-    -Password 0444 `
-    -Mode $AuthMode `
-    -VistaMode Api `
-    -RunAsConsole
-
-Invoke-ProcessAsUser `
-    -Application 'cmd.exe' `
-    -UserName Administrator `
-    -Password 0444 `
-    -Mode $AuthMode `
-    -VistaMode Api `
-    -RunAsConsole `
-    -SetVistaFlag -SetNewVista
-
-Invoke-ProcessAsUser `
-    -Application 'notepad.exe' `
-    -UserName Administrator `
-    -Password 0444 `
-    -Mode $AuthMode `
-    -VistaMode Api `
-    -SetVistaFlag
-#>
 #>
 Function Invoke-Process {
     Param (
@@ -11865,7 +11842,9 @@ function Send-CsrClientCall {
         $baseApiMsg = $AssemblyName = $FallBacks = $null
     }
 }
+#endregion
 
+#region "Impersonate"
 <#
 .SYNOPSIS
 
@@ -12062,6 +12041,11 @@ Function Impersonate-Token {
         $Status -ge 0
     )
 }
+#endregion
+
+#region "HWID_SUB"
+# Just a place holder
+#endregion
 
 # work - job Here.
 
