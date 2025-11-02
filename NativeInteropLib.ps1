@@ -6949,6 +6949,9 @@ Function Adjust-TokenPrivileges {
         [IntPtr]$hProcess,
 
         [Parameter(Mandatory=$false)]
+        [IntPtr]$hToken = [IntPtr]::Zero,
+
+        [Parameter(Mandatory=$false)]
         [string]$Account,
 
         [Parameter(Mandatory=$false)]
@@ -7164,23 +7167,29 @@ Function Adjust-TokenPrivileges {
         throw "Invalid process handle."
     }
     
-    $hToken = [IntPtr]::Zero
     $hproc = [IntPtr]$hproc
 
-    if ($SysCall) {
-        $retVal = $Global:ntdll::NtOpenProcessToken(
-            $hproc, ($TOKEN_ADJUST_PRIVILEGES -bor $TOKEN_QUERY), [ref]$hToken)
-    }
-    else {
-        $retVal = $Global:advapi32::OpenProcessToken(
-            $hproc, ($TOKEN_ADJUST_PRIVILEGES -bor $TOKEN_QUERY), [ref]$hToken)
-    }
+    # // Set At parameters level instead
+    # // $hToken = if (IsValid-IntPtr $hToken) { [IntPtr]$hToken } else { [IntPtr]::Zero }
 
-    # if both return same result, which can be true if both *false
-    # well, in that case -> throw, and return error
-    if ((!$SysCall -and $retVal -ne 0 -and $hToken -ne [IntPtr]::Zero) -eq (
-        $SysCall -and $retVal -eq 0 -and $hToken -ne [IntPtr]::Zero)) {
-            throw "OpenProcessToken failed with -> $retVal"
+    if (IsValid-IntPtr $hToken) {
+        # Just a place HOlder
+    } else {
+        if ($SysCall) {
+            $retVal = $Global:ntdll::NtOpenProcessToken(
+                $hproc, ($TOKEN_ADJUST_PRIVILEGES -bor $TOKEN_QUERY), [ref]$hToken)
+        }
+        else {
+            $retVal = $Global:advapi32::OpenProcessToken(
+                $hproc, ($TOKEN_ADJUST_PRIVILEGES -bor $TOKEN_QUERY), [ref]$hToken)
+        }
+
+        # if both return same result, which can be true if both *false
+        # well, in that case -> throw, and return error
+        if ((!$SysCall -and $retVal -ne 0 -and $hToken -ne [IntPtr]::Zero) -eq (
+            $SysCall -and $retVal -eq 0 -and $hToken -ne [IntPtr]::Zero)) {
+                throw "OpenProcessToken failed with -> $retVal"
+        }
     }
 
     if ($AdjustAll) {
@@ -7415,7 +7424,7 @@ Function Adjust-TokenPrivileges {
                 if ($retVal -eq 0) {
                     $status = Parse-ErrorMessage -MessageId $lastErr -Flags WIN32
                     Write-Warning "AdjustTokenPrivileges failed: $status"
-                    returh $false
+                    return $false
                 } elseif ($lastErr -eq 1300) {
                     Write-Warning "AdjustTokenPrivileges succeeded but not all privileges assigned."
                     return $true
@@ -10557,12 +10566,20 @@ Invoke-ProcessAsUser `
 # Interactive Window will be available even on Normal User
 # Usually Run from Service. Real one. Make Sure Run ISe AS System
 # Do not Set Flags Of -SetVistaFlag -SetNewVista -RemoveVistaAce
-Invoke-ProcessAsUser `
+
+$hToken = Get-ProcessHelper -ProcessName WinLogon -AsToken $true
+Impersonate-Token -hToken $hToken
+Adjust-TokenPrivileges -hToken $hToken -Query
+
+(Invoke-ProcessAsUser `
     -Application 'cmd.exe' `
     -CommandLine '/k whoami' `
     -Mode User `
     -RunAsConsole `
-    -RunAsActiveSession
+    -RunAsActiveSession) | Out-Null
+
+Impersonate-Token -Revert -Free
+Free-IntPtr $hToken -Method NtHandle
 #>
 Function Invoke-Process {
     Param (
