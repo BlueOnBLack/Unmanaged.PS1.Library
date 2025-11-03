@@ -2407,6 +2407,7 @@ function New-IntPtr {
 
     if ($MakeRefType) {
         $handlePtr = [Marshal]::AllocHGlobal([IntPtr]::Size)
+        [Marshal]::WriteIntPtr($handlePtr, 0x0, [IntPtr]0)
         [Marshal]::WriteIntPtr($handlePtr, $hHandle)
         return $handlePtr
     }
@@ -8432,6 +8433,7 @@ Function NtCurrentTeb {
                Write-Warning "Mode: Buffer.   TypeOf:GetAddressByPointer"
             }
             $baseAdd = [marshal]::AllocHGlobal([IntPtr]::Size)
+            [Marshal]::WriteIntPtr($baseAdd, 0x0, [IntPtr]0)
             [Marshal]::GetDelegateForFunctionPointer(
                 $baseAddress,[TEB+GetAddressByPointer]).Invoke($baseAdd)
             $Address = [marshal]::ReadIntPtr($baseAdd)
