@@ -2028,6 +2028,18 @@ Function Bor {
     }
     return [Int32]$ret
 }
+function Bor-EnumFlags {
+    param(
+        [Parameter(Mandatory)]
+        [Type] $EnumType
+    )
+
+    $Access = 0
+    [ENUM]::GetNames($EnumType) | ForEach-Object {
+        $Access = $Access -bor [int]($EnumType::$_)
+    }
+    return $Access
+}
 function Get-EnumFlags {
     [CmdletBinding()]
     param(
@@ -7163,11 +7175,13 @@ Function Adjust-TokenPrivileges {
 
     # Validate the handle is valid and non-zero
     $hproc = if ($Process) {$Process.Handle} else {$hProcess}
-    if ($hproc -eq [IntPtr]::Zero -or $hproc -eq 0 -or $hproc -eq $Null) {
+    if (!(IsValid-IntPtr $hproc) -and !(IsValid-IntPtr $hToken)) {
         throw "Invalid process handle."
     }
     
-    $hproc = [IntPtr]$hproc
+    if (IsValid-IntPtr $hproc) {
+      $hproc = [IntPtr]$hproc
+    }
 
     # // Set At parameters level instead
     # // $hToken = if (IsValid-IntPtr $hToken) { [IntPtr]$hToken } else { [IntPtr]::Zero }
@@ -7213,8 +7227,6 @@ Function Adjust-TokenPrivileges {
 
     # Query Case
     if ($Query) {
-        # Allocate memory for TOKEN_PRIVILEGES
-        $tokenInfoPtr = [Marshal]::AllocHGlobal($tokenInfoLength)
         try {
             $tokenInfoLength = 0
             $Global:advapi32::GetTokenInformation($hToken, 3, [IntPtr]0, 0, [ref]$tokenInfoLength) | Out-Null
@@ -7240,8 +7252,12 @@ Function Adjust-TokenPrivileges {
                 $Global:advapi32::LookupPrivilegeNameW([IntPtr]::Zero, [ref]$luid, $namePtr, [ref]$size) | Out-Null
                 $namePtr = [Marshal]::AllocHGlobal(($size + 1) * 2)
                 try {
-                    $Global:advapi32::LookupPrivilegeNameW([IntPtr]::Zero, [ref]$luid, $namePtr, [ref]$size) | Out-Null
-                    $privName = [Marshal]::PtrToStringUni($namePtr)
+                    if ($size -gt 0) {
+                      $Global:advapi32::LookupPrivilegeNameW([IntPtr]::Zero, [ref]$luid, $namePtr, [ref]$size) | Out-Null
+                      $privName = [Marshal]::PtrToStringUni($namePtr)
+                    } else {
+                        $privName = 'N\A'
+                    }
                     $privileges += [PSCustomObject]@{
                         Name    = $privName
                         LUID    = $luid
@@ -9303,6 +9319,18 @@ enum VistaMode {
     DotNet = 1
     Api    = 2
 }
+enum TOKEN_ACCESS {
+    STANDARD          = 0x000F0000
+    ASSIGN_PRIMARY    = 0x0001
+    DUPLICATE         = 0x0002
+    IMPERSONATE       = 0x0004
+    QUERY             = 0x0008
+    QUERY_SOURCE      = 0x0010
+    ADJUST_PRIVILEGES = 0x0020
+    ADJUST_GROUPS     = 0x0040
+    ADJUST_DEFAULT    = 0x0080
+    ADJUST_SESSIONID  = 0x0100
+}
 enum SERVICE_STATUS {
     STOPPED = 0x00000001
     START_PENDING = 0x00000002
@@ -9711,6 +9739,7 @@ Function Obtain-UserToken {
           The user represented by the token must have read and execute access to the application
           specified by the lpApplicationName or the lpCommandLine parameter.
         #>
+
         if ($Method -eq "LogonUserExExW") {
             if (!(Invoke-UnmanagedMethod `
                 -Dll sspicli `
@@ -9738,31 +9767,86 @@ Function Obtain-UserToken {
             }
         }
 
+        if (-not ([PSTypeName]'OBJECT_ATTRIBUTES').Type) {
+            $module = New-InMemoryModule -ModuleName "OBJECT_ATTRIBUTES"
+
+            New-Struct `
+                -Module $module `
+                -FullName "OBJECT_ATTRIBUTES" `
+                -StructFields @{
+                    Length                   = New-Field 0 "UInt32"
+                    RootDirectory            = New-Field 1 "IntPtr"  # HANDLE
+                    ObjectName               = New-Field 2 "IntPtr"  # PUNICODE_STRING
+                    Attributes               = New-Field 3 "UInt32"
+                    SecurityDescriptor       = New-Field 4 "IntPtr"  # PVOID -> SECURITY_DESCRIPTOR
+                    SecurityQualityOfService = New-Field 5 "IntPtr"  # PVOID -> SECURITY_QUALITY_OF_SERVICE
+                } | Out-Null
+        }
+        #Write-Host
+        #Print-Struct -StructType ('OBJECT_ATTRIBUTES')
+
+        if (-not ([PSTypeName]'SECURITY_QUALITY_OF_SERVICE').Type) {
+            $module = New-InMemoryModule -ModuleName "SECURITY_QUALITY_OF_SERVICE"
+
+            New-Struct `
+                -Module $module `
+                -FullName "SECURITY_QUALITY_OF_SERVICE" `
+                -StructFields @{
+                    Length              = New-Field 0 "UInt32"  # DWORD
+                    ImpersonationLevel  = New-Field 1 "UInt32"  # SECURITY_IMPERSONATION_LEVEL
+                    ContextTrackingMode = New-Field 2 "Byte"    # SECURITY_CONTEXT_TRACKING_MODE
+                    EffectiveOnly       = New-Field 3 "Byte"    # BOOLEAN
+                } | Out-Null
+        }
+        #Write-Host
+        #Print-Struct -StructType ('SECURITY_QUALITY_OF_SERVICE')
+
+        $AttributePtr = [IntPtr]::Zero
+        if ($impersonate) {
+
+            $Attribute = [Activator]::CreateInstance('OBJECT_ATTRIBUTES')
+            $Security  = [Activator]::CreateInstance('SECURITY_QUALITY_OF_SERVICE')
+            $Security.Length = 12              # v11[0] = 12; // SizeOf
+            $Security.ImpersonationLevel  = 2  # Impersonate, 2
+            $Security.ContextTrackingMode = 1  # v12 = 1;
+            $Security.EffectiveOnly       = 0
+    
+            $SecurityPtr = New-IntPtr -Size 12
+            [marshal]::StructureToPtr($Security, $SecurityPtr, $true)
+            $Attribute.Length = 48             # ObjectAttributes.Length = 48; // SizeOf
+            $Attribute.SecurityQualityOfService = $SecurityPtr
+
+            $AttributePtr = New-IntPtr -Size 48
+            [marshal]::StructureToPtr($Attribute, $AttributePtr, $true)
+        }
+
         # Duplicate token to Primary
         $hToken = [IntPtr]0
+        # // DUPLICATE, 2, IMPERSONATE, 4, QUERY, 8
+        $MIN_ACCESS = Bor @(0x0002, 0x0004, 0x0008)
+        $ALL_ACCESS = Bor-EnumFlags -EnumType TOKEN_ACCESS
         $TokenType = if ($impersonate) {0x02} else {0x01}
+
         $ret = $USER::NtDuplicateToken(
             $phToken,      # [in] Existing Token Handle
-            0xF01FF,       # [in] DesiredAccess (TOKEN_ALL_ACCESS)
-            [IntPtr]0,     # [in] ObjectAttributes (NULL)
+            $ALL_ACCESS,   # [in] DesiredAccess (TOKEN_ALL_ACCESS)
+            $AttributePtr, # [in] ObjectAttributes (NULL)
             0x00,          # [in] BOOLEAN EffectiveOnly (FALSE)
             $TokenType,    # [in] TOKEN_TYPE (TokenPrimary)
             ([ref]$hToken) # [out] New Token Handle
         )
 
-        if ($ret -ne 0) {
-            $MinimumFlags = 0x0002 -bor 0x0004 -and 0x0008
+        if ($ret -ne 0) {           
             $ret = $USER::NtDuplicateToken(
                 $phToken,        # [in] Existing Token Handle
-                $MinimumFlags,   # [in] DesiredAccess (TOKEN_ALL_ACCESS)
-                [IntPtr]0,       # [in] ObjectAttributes (NULL)
+                $MIN_ACCESS,     # [in] DesiredAccess (TOKEN_ALL_ACCESS)
+                $AttributePtr,   # [in] ObjectAttributes (NULL)
                 0x00,            # [in] BOOLEAN EffectiveOnly (FALSE)
                 $TokenType,      # [in] TOKEN_TYPE (TokenPrimary)
                 ([ref]$hToken)   # [out] New Token Handle
             )
 
             if ($ret -ne 0) {
-                #Free-IntPtr -handle $hToken -Method NtHandle
                 $hToken = [IntPtr]$phToken
                 $retMsg = Parse-ErrorMessage -MessageId $ret -Flags NTSTATUS
                 
@@ -9771,6 +9855,9 @@ Function Obtain-UserToken {
                 Write-Warning $retMsg
             }
         }
+
+        Free-IntPtr $SecurityPtr
+        Free-IntPtr $AttributePtr
 
         if (!$LoadProfile) {
             if ($phToken -ne $hToken) {
@@ -11874,7 +11961,7 @@ Write-Host
 
 # From Logon / Process
 #$hToken = Get-ProcessHelper -ProcessName lsass -AsToken $true
-#$hToken = Obtain-UserToken -UserName administrator -Password 0444 -impersonate
+#$hToken = Obtain-UserToken -UserName administrator -Password 0444 -TokenType 0x02 -LogonType 0x03 -Method LsaLogonUser -impersonate
 #Impersonate-Token -hToken $hToken
 
 # From Process, Auto Mode
