@@ -65,6 +65,11 @@ Extract Flags From `Flag` value
 Function Get-EnumFlags
 
 <#
+Join All Flags Of Enum Of Type ?
+#>
+function Bor-EnumFlags
+
+<#
 Just a little helper, 
 to convert String, or values into Sid
 or Print it later if needed
