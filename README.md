@@ -316,28 +316,55 @@ if (-not ([PSTypeName]'OBJECT_ATTRIBUTES').Type) {
 }
 Print-Struct -StructType ('OBJECT_ATTRIBUTES')
 
-# Mode Token / User
-# Req` System Prev, And Also User/Pass Of High Prev Acc
-# Interactive Window will be avilible even on Normal User
-# Can be used with --> -VistaMode // DotNet, Api, Auto
-# Can be used with --> -SetVistaFlag -SetNewVista
-# can be used with --> -RemoveVistaAce, Only for cmd.exe // Aka Terminal
-Invoke-ProcessAsUser `
-    -Application 'conhost.exe' `
-    -UserName Administrator `
-    -Password 0444 `
-    -Mode Token `
-    -RunAsConsole `
-    -VistaMode DotNet `
-    -SetVistaFlag -SetNewVista
+$ComObj = New-ComInterface `
+    -InterfaceName 'IEditionUpgradeManager' `
+    -Clsid '17CCA47D-DAE5-4E4A-AC42-CC54E28F334A' `
+    -IID 'F2DCB80D-0670-44BC-9002-CD18688730AF' `
+    -Fields @(
+        @{ name = 'Place_Holder' },
+        @{ name = 'Place_Holder' },
+        @{
+            Name = 'ShowProductKeyUI'
+            attributes = (Bor @(2,4,6,64,128,256,1024))
+            callingConvention = (Bor @(1,32))
+        },
+        @{
+            name = 'UpdateOperatingSystemWithParams'
+            attributes = (Bor @(2,4,6,64,128,256,1024))
+            callingConvention = (Bor @(1,32))
+            returnType = [Int32]
+            parameterTypes = @([string], [Int32], [Int32], [Int32])
+        }
+    )
 
-# COM: show product key UI (no parameters)
+Invoke-ComInterface `
+    -ComObject $ComObj `
+    -Method ShowProductKeyUI `
+    -Params @()
+
+Invoke-ComInterface `
+    -ComObject $ComObj `
+    -Method UpdateOperatingSystemWithParams `
+    -Params @('QPM6N-7J2WJ-P88HH-P3YRH-YY74H', 0, 1, 0)
+
+[Marshal]::ReleaseComObject($ComObj.Instance) | Out-Null
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
+# Alternative Way. [Call to A Specific Function] #
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
+
 Use-ComInterface `
-    -CLSID "17CCA47D-DAE5-4E4A-AC42-CC54E28F334A" `
-    -IID  "f2dcb80d-0670-44bc-9002-cd18688730af" `
+    -Clsid '17CCA47D-DAE5-4E4A-AC42-CC54E28F334A' `
+    -IID 'F2DCB80D-0670-44BC-9002-CD18688730AF' `
     -Index 3 `
-    -Name  "ShowProductKeyUI" `
-    -Return "void"
+    -Name ShowProductKeyUI
+
+Use-ComInterface `
+    -Clsid '17CCA47D-DAE5-4E4A-AC42-CC54E28F334A' `
+    -IID 'F2DCB80D-0670-44BC-9002-CD18688730AF' `
+    -Index 4 `
+    -Name UpdateOperatingSystemWithParams `
+    -Values @('QPM6N-7J2WJ-P88HH-P3YRH-YY74H', 0, 1, 0)
 
 # Unmanaged DLL: Beep (kernel32.dll)
 Invoke-UnmanagedMethod `
