@@ -132,6 +132,10 @@ Also, can do it manual, Using
 Initialize-ComObject, Receive-ComObject, .. etc
 #>
 Function Use-ComInterface
+Function Build-ComInterfaceSpec
+Function Initialize-ComObject
+Function Invoke-Object
+Function Release-ComObject
 
 <#
 Helper to Create Full Interface, using Reflection
@@ -148,7 +152,7 @@ Also with GetSize And Casting Support
 And Also print Struct Info.
 #>
 Function New-Struct
-Print-Struct
+Function Print-Struct
 
 <#
 Helper to Call any Win32 / Low level Api call,
@@ -157,6 +161,10 @@ Minimal code,Parameters, Dll Name, Function Name
 Using delegete, And ASM, And Protect/Allocate Both way's supported
 #>
 Function Invoke-UnmanagedMethod
+Function Build-ApiInterfaceSpec
+Function Initialize-ApiObject
+Function Invoke-Object
+Function Release-ApiObject
 
 <#
 Helper to Create Managed UNICODE_STRING / STRING Struct
@@ -269,6 +277,19 @@ Impersonates a Windows token or reverts the current thread to self.
 Using Build In Option From, Process Name. ID, hToken
 #>
 Function Impersonate-Token
+
+<#
+Get a Dacl Object, Enum, Rebuild, And set New Security
+#>
+function Get-Dacl
+function Enum-Dacl
+function ReBuild-Dacl
+function Set-ObjectSecurity
+
+<#
+Get logon Sid of HToken From User login
+#>
+function Get-LogonSid
 ````
 
 ## Code samples
