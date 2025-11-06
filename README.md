@@ -300,6 +300,22 @@ Below are quick, high-level samples showing the module's call patterns. These ex
 Clear-Host
 Write-Host
 
+if (-not ([PSTypeName]'OBJECT_ATTRIBUTES').Type) {
+    $module = New-InMemoryModule -ModuleName "OBJECT_ATTRIBUTES"
+    New-Struct `
+        -Module $module `
+        -FullName "OBJECT_ATTRIBUTES" `
+        -StructFields @{
+            Length                   = New-Field 0 "UInt32"
+            RootDirectory            = New-Field 1 "IntPtr"  # HANDLE
+            ObjectName               = New-Field 2 "IntPtr"  # PUNICODE_STRING
+            Attributes               = New-Field 3 "UInt32"
+            SecurityDescriptor       = New-Field 4 "IntPtr"  # PVOID -> SECURITY_DESCRIPTOR
+            SecurityQualityOfService = New-Field 5 "IntPtr"  # PVOID -> SECURITY_QUALITY_OF_SERVICE
+        } | Out-Null
+}
+Print-Struct -StructType ('OBJECT_ATTRIBUTES')
+
 # Mode Token / User
 # Req` System Prev, And Also User/Pass Of High Prev Acc
 # Interactive Window will be avilible even on Normal User
@@ -314,31 +330,6 @@ Invoke-ProcessAsUser `
     -RunAsConsole `
     -VistaMode DotNet `
     -SetVistaFlag -SetNewVista
-
-# Can be used with Any User
-# VistaMode Not Applied to this Case !
-# Do not Set Flags Of 
-# -SetVistaFlag -SetNewVista -RemoveVistaAce
-Invoke-ProcessAsUser `
-    -Application 'cmd.exe' `
-    -CommandLine '/k whoami' `
-    -UserName 'Any_User' `
-    -Password 'Password' `
-    -Mode Logon `
-    -RunAsConsole
-
-# Logon+ Mode
-# Can be used with High Priv Acc Only
-# Low/High Pri Acc call high Priv Acc
-# Can be used with --> -VistaMode // DotNet, Api, Auto
-# Can be used with --> -SetVistaFlag -SetNewVista
-# can be used with --> -RemoveVistaAce, Only for cmd.exe // Aka Terminal
-Invoke-ProcessAsUser `
-    -Application 'notepad.exe' `
-    -UserName Administrator `
-    -Password 0444 `
-    -VistaMode Auto `
-    -Mode Hybrid
 
 # COM: show product key UI (no parameters)
 Use-ComInterface `
@@ -414,45 +405,6 @@ $ret = Invoke-UnmanagedMethod `
 Free-NativeString -StringPtr $ObjectName
 write-host "NtCreateFile Test: $ret"
 
-# From Logon / Process
-$hToken = Get-ProcessHelper -ProcessName lsass -AsToken $true
-#$hToken = Obtain-UserToken -UserName administrator -Password 0444 -impersonate
-Impersonate-Token -hToken $hToken
-# From Process, Auto Mode
-#Impersonate-Token -ProcessName lsass
-$regPath = 'HKLM:\SECURITY\Policy\Accounts'
-Get-ChildItem -Path $regPath -ErrorAction SilentlyContinue
-# Clean hToken Provide by user & From global:
-Impersonate-Token -Revert -Free
-Free-IntPtr $hToken -Method NtHandle
-
-# Mode [User], Req` *Act As System* Priv' [SeTcbPrivilege]
-# Interactive Window will be available even on Normal User
-# Usually Run from Service. Real one. Make Sure Run ISe AS System
-# Do not Set Flags Of -SetVistaFlag -SetNewVista -RemoveVistaAce
-Invoke-ProcessAsUser `
-    -Application 'cmd.exe' `
-    -CommandLine '/k whoami' `
-    -Mode User `
-    -RunAsConsole `
-    -RunAsActiveSession
-
-if (-not ([PSTypeName]'OBJECT_ATTRIBUTES').Type) {
-    $module = New-InMemoryModule -ModuleName "OBJECT_ATTRIBUTES"
-    New-Struct `
-        -Module $module `
-        -FullName "OBJECT_ATTRIBUTES" `
-        -StructFields @{
-            Length                   = New-Field 0 "UInt32"
-            RootDirectory            = New-Field 1 "IntPtr"  # HANDLE
-            ObjectName               = New-Field 2 "IntPtr"  # PUNICODE_STRING
-            Attributes               = New-Field 3 "UInt32"
-            SecurityDescriptor       = New-Field 4 "IntPtr"  # PVOID -> SECURITY_DESCRIPTOR
-            SecurityQualityOfService = New-Field 5 "IntPtr"  # PVOID -> SECURITY_QUALITY_OF_SERVICE
-        } | Out-Null
-}
-Print-Struct -StructType ('OBJECT_ATTRIBUTES')
-
 # Make sure to assigen SeAssignPrimaryTokenPrivilege Priv to Account
 $AssignPrivilege = Adjust-TokenPrivileges -Query | ? Name -match SeAssignPrimaryTokenPrivilege
 if (-not $AssignPrivilege) {
@@ -472,4 +424,76 @@ if (-not $AssignPrivilege) {
     catch {}
 }
 Adjust-TokenPrivileges -Privilege SeAssignPrimaryTokenPrivilege -SysCall
+
+Invoke-Process `
+    -CommandLine "cmd /k echo Hello From TrustedInstaller && whoami" `
+    -ServiceName TrustedInstaller `
+    -RunAsConsole `
+    -RunAsParent
+
+Invoke-Process `
+    -CommandLine "cmd /k echo Hello From winlogon && whoami" `
+    -ProcessName winlogon `
+    -RunAsConsole `
+    -UseDuplicatedToken
+
+# Mode Token / User
+# Req` System Prev, And Also User/Pass Of High Prev Acc
+# Interactive Window will be avilible even on Normal User
+# Can be used with --> -VistaMode // DotNet, Api, Auto
+# Can be used with --> -SetVistaFlag -SetNewVista
+# can be used with --> -RemoveVistaAce, Only for cmd.exe // Aka Terminal
+Invoke-ProcessAsUser `
+    -Application 'conhost.exe' `
+    -UserName Administrator `
+    -Password 0444 `
+    -Mode Token `
+    -RunAsConsole `
+    -VistaMode DotNet `
+    -SetVistaFlag -SetNewVista
+
+# Can be used with Any User
+# VistaMode Not Applied to this Case !
+# Do not Set Flags Of 
+# -SetVistaFlag -SetNewVista -RemoveVistaAce
+Invoke-ProcessAsUser `
+    -Application 'cmd.exe' `
+    -CommandLine '/k whoami' `
+    -UserName 'Any_User' `
+    -Password 'Password' `
+    -Mode Logon `
+    -RunAsConsole
+
+# Logon+ Mode
+# Can be used with High Priv Acc Only
+# Low/High Pri Acc call high Priv Acc
+# Can be used with --> -VistaMode // DotNet, Api, Auto
+# Can be used with --> -SetVistaFlag -SetNewVista
+# can be used with --> -RemoveVistaAce, Only for cmd.exe // Aka Terminal
+Invoke-ProcessAsUser `
+    -Application 'notepad.exe' `
+    -UserName Administrator `
+    -Password 0444 `
+    -VistaMode Auto `
+    -Mode Hybrid
+
+# Mode [User], Req` *Act As System* Priv' [SeTcbPrivilege]
+# Interactive Window will be available even on Normal User
+# Usually Run from Service. Real one. Make Sure Run ISe AS System
+# Do not Set Flags Of -SetVistaFlag -SetNewVista -RemoveVistaAce
+
+$hToken = Get-ProcessHelper -ProcessName WinLogon -AsToken $true
+Impersonate-Token -hToken $hToken
+Adjust-TokenPrivileges -hToken $hToken -Query
+
+(Invoke-ProcessAsUser `
+    -Application 'cmd.exe' `
+    -CommandLine '/k whoami' `
+    -Mode User `
+    -RunAsConsole `
+    -RunAsActiveSession) | Out-Null
+
+Impersonate-Token -Revert -Free
+Free-IntPtr $hToken -Method NtHandle
+
 ````
