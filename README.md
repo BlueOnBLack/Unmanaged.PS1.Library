@@ -523,4 +523,31 @@ Adjust-TokenPrivileges -hToken $hToken -Query
 Impersonate-Token -Revert -Free
 Free-IntPtr $hToken -Method NtHandle
 
+---- Dacl Example ---- 
+
+$hToken = Obtain-UserToken `
+    -UserName administrator `
+    -Password 0444
+$hProc = [IntPtr]-1
+$logonInfo = Get-LogonSid $hToken
+$LogonSid = Sid-Helper -pValue $logonInfo
+
+Write-Host "Before ~ !" -ForegroundColor Green
+Write-Host
+
+$dacl = Get-Dacl $hProc
+Enum-Dacl -Handle $dacl.Handle | Format-Table -AutoSize
+Free-IntPtr -handle $dacl.SD
+
+Write-Host "After ~ !" -ForegroundColor Green
+Write-Host
+
+$info = Process-UserToken -hToken $hToken
+$dacl = Get-Dacl $hProc
+Enum-Dacl -Handle $dacl.Handle | Format-Table -AutoSize
+Free-IntPtr -handle $dacl.SD
+
+Process-UserToken -Params $info
+Free-IntPtr -handle $hToken -Method NtHandle
+
 ````
