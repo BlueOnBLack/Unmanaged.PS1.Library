@@ -10772,6 +10772,7 @@ Function Process-UserToken {
        # !!!!!!!!!!!!!!!!!!! ~ @
         if ($UseDotNet) {
        # !!!!!!!!!!!!!!!!!!! ~ @
+
             if ($UseCurrent) {
                 $hProc = Get-NtProcess -Current -Access MaximumAllowed
                 $hDesktop = Get-NtDesktop -Current -Access MaximumAllowed
@@ -10807,9 +10808,9 @@ Function Process-UserToken {
             $hDesktop = $Token::GetThreadDesktop(
                 ($Token::GetCurrentThreadId()))
        
-       # !!!!!!!!!!!!!!!!!!! ~ @
+      # !!!!!!!! ~ @
         } else {
-       # !!!!!!!!!!!!!!!!!!! ~ @
+      # !!!!!!!! ~ @
 
             $hwinstaSave = $Token::GetProcessWindowStation()
             if (!(IsValid-IntPtr $hwinstaSave)) {
@@ -10897,7 +10898,7 @@ Function Process-UserToken {
             $logonInfo = Get-LogonSid $hToken
             $LogonSid = Sid-Helper -pValue $logonInfo
             $lastSub = $logonInfo -split '-' | select -Last 1| Out-String
-            # ~~~~~~~~~~~~
+            # ~~~~~~~~~~~~ ~~~~~~~~~~~ $
             $dacl = Get-Dacl -Handle ([IntPtr]-1)
             $AceArr = Enum-Dacl -Handle $dacl.Handle
             $newAcl = ReBuild-Dacl `
@@ -10910,10 +10911,10 @@ Function Process-UserToken {
                         Mode   = "Allowed" # "Denied"
                     }
                 )
-            Set-ObjectSecurity ([IntPtr]-1) $newAcl.Handle
+            Set-ObjectSecurity ([IntPtr]-1) $newAcl.Handle | Out-Null
             Free-IntPtr -handle $dacl.SD
             Free-IntPtr -handle $newAcl.Handle
-            # ~~~~~~~~~~~~
+            # ~~~~~~~~~~~~ ~~~~~~~~~~~ $
             $dacl = Get-Dacl -Handle $hDesktop
             $AceArr = Enum-Dacl -Handle $dacl.Handle
             $newAcl = ReBuild-Dacl `
@@ -10926,10 +10927,10 @@ Function Process-UserToken {
                         Mode   = "Allowed" # "Denied"
                     }
                 )
-            Set-ObjectSecurity $hDesktop $newAcl.Handle
+            Set-ObjectSecurity $hDesktop $newAcl.Handle | Out-Null
             Free-IntPtr -handle $dacl.SD
             Free-IntPtr -handle $newAcl.Handle
-            # ~~~~~~~~~~~~
+            # ~~~~~~~~~~~~ ~~~~~~~~~~~ $
             $dacl = Get-Dacl -Handle $hWinSta
             $AceArr = Enum-Dacl -Handle $dacl.Handle
             $newAcl = ReBuild-Dacl `
@@ -10948,7 +10949,7 @@ Function Process-UserToken {
                         Mode   = "Allowed" # "Denied"
                     }
                 )
-            Set-ObjectSecurity $hWinSta $newAcl.Handle
+            Set-ObjectSecurity $hWinSta $newAcl.Handle | Out-Null
             Free-IntPtr -handle $dacl.SD
             Free-IntPtr -handle $newAcl.Handle
         }
