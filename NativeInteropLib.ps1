@@ -24,10 +24,6 @@ using namespace System.Windows.Forms
 $ProgressPreference = 'SilentlyContinue'
 
 Import-Module NtObjectManager -ErrorAction SilentlyContinue
-if (!(Get-Module -Name NtObjectManager)) {
-    Install-Module NtObjectManager -Force -ErrorAction SilentlyContinue
-    Import-Module NtObjectManager -ErrorAction SilentlyContinue
-}
 if (!([PSTypeName]'NtCoreLib.NtToken').Type) {
     Write-warning 'NtObjectManager types cant be found!'
 }
@@ -2386,6 +2382,9 @@ function New-IntPtr {
         [byte[]]$Data,
 
         [Parameter(Mandatory=$false)]
+        [Object]$Object,
+
+        [Parameter(Mandatory=$false)]
         [switch]$UsePointerSize,
 
         [switch]$MakeRefType,
@@ -2425,13 +2424,19 @@ function New-IntPtr {
         [Marshal]::Copy($Data, 0, $ptr, $Size)
         return $ptr
     }
+    elseif ($Object) {
+        $Size = [Marshal]::SizeOf($Object)
+    }
 
     if ($Size -le 0) {
         throw [ArgumentException]::new("Size must be a positive non-zero integer.")
     }
     $ptr = [Marshal]::AllocHGlobal($Size)
     $Global:ntdll::RtlZeroMemory($ptr, [UIntPtr]::new($Size))
-    if ($WriteSizeAtZero) {
+    if ($Object) {
+        [marshal]::StructureToPtr($Object, $ptr, $false)
+    }
+    elseif ($WriteSizeAtZero) {
         if ($UsePointerSize) {
             [Marshal]::WriteIntPtr($ptr, 0, [IntPtr]::new($Size))
         }
@@ -6681,6 +6686,554 @@ function Free-Variant {
 }
 #endregion
 
+#region DACL
+
+<#
+$hToken = Obtain-UserToken `
+    -UserName Administrator `
+    -Password 0444
+
+$hStation = Invoke-UnmanagedMethod User32.dll GetProcessWindowStation
+$dacl = Get-Dacl $hStation
+
+Write-Host ("Count : {0}" -f $dacl.Count) -ForegroundColor Green
+Write-Host
+
+# Get SD & ACL
+$logonInfo = Get-LogonSid $hToken
+$LogonSid = Sid-Helper -pValue $logonInfo
+$lastSub = $logonInfo -split '-' | select -Last 1| Out-String
+
+# Add ACE
+$AceArr = Enum-Dacl -Handle $dacl.Handle
+$newAcl = ReBuild-Dacl `
+    -AceList $AceArr `
+    -UpdateFrom @(
+        [PSCustomObject]@{ 
+            Flags   = 0x2 -bor 0x8 -bor 0x1
+            Access = 0x80000000 -bor 0x40000000 -bor 0x20000000 -bor 0x10000000
+            pSid   = $LogonSid
+            Mode   = "Allowed" # "Denied"
+        },
+        [PSCustomObject]@{ 
+            Flags  = 0x4
+            Access = 0x0001 -bor 0x0002 -bor 0x0004 -bor 0x0008 -bor 0x0010 -bor 0x0020 -bor 0x0040 -bor 0x0100 -bor 0x0200
+            pSid   = $LogonSid
+            Mode   = "Allowed" # "Denied"
+        }
+    )
+Write-Host ("Count : {0}" -f ([ACL]$newAcl.Handle).AceCount) -ForegroundColor Green
+Write-Host ( "Set Object Results : {0}" -f (Set-ObjectSecurity $hStation $newAcl.Handle)) -ForegroundColor Yellow
+Write-Host
+
+# Remove ACE
+$newAcl = ReBuild-Dacl (
+    Enum-Dacl $newAcl.Handle | Where-Object { -not $_.Sid.ToString().EndsWith($lastSub.Trim()) }
+)
+Write-Host ("Count : {0}" -f ([ACL]$newAcl.Handle).AceCount) -ForegroundColor Green
+Write-Host ( "Set Object Results : {0}" -f (Set-ObjectSecurity $hStation $newAcl.Handle)) -ForegroundColor Yellow
+
+# Set SD
+Free-IntPtr -handle $dacl.SD
+Free-IntPtr -handle $newAcl.Handle
+Free-IntPtr $hToken -Method NtHandle
+#>
+
+try {
+    $Module = [AppDomain]::CurrentDomain.GetAssemblies()| ? { $_.ManifestModule.ScopeName -eq "AceHelper" } | select -Last 1
+    $AceHelper = $Module.GetTypes()[0]
+}
+catch {
+    $Module = [AppDomain]::CurrentDomain.DefineDynamicAssembly("null", 1).DefineDynamicModule("AceHelper", $False).DefineType("null")
+    @(
+        @('null', 'null', [int], @()), # place holder
+        @('NtQuerySecurityObject',        'ntdll', [int], @([IntPtr], [Int32],[IntPtr], [Int32],[Int32].MakeByRefType())),
+        @('NtSetSecurityObject',          'ntdll', [int], @([IntPtr], [Int32],[IntPtr]))
+
+    ) | % {
+        $Module.DefinePInvokeMethod(($_[0]), ($_[1]), 22, 1, [Type]($_[2]), [Type[]]($_[3]), 1, 3).SetImplementationFlags(128) # Def` 128, fail-safe 0 
+    }
+    $AceHelper = $Module.CreateType()
+}
+
+if (-not ([PSTypeName]'ACE').Type) {
+    $module = New-InMemoryModule -ModuleName "ACE"
+    New-Struct `
+        -Module $module `
+        -FullName "ACE" `
+        -StructFields @{
+            AceType  = New-Field 0 "Byte"
+            AceFlags = New-Field 1 "Byte"
+            AceSize  = New-Field 2 "Int16"
+            Mask     = New-Field 3 "Int32"
+            SidStart = New-Field 4 "Int32"
+        } | Out-Null
+}
+if (-not ([PSTypeName]'ACL').Type) {
+    $module = New-InMemoryModule -ModuleName "ACL"
+    New-Struct `
+        -Module $module `
+        -FullName "ACL" `
+        -StructFields @{
+            AclRevision  = New-Field 0 "Byte"
+            Sbz1         = New-Field 1 "Byte"
+            AclSize      = New-Field 2 "Int16"
+            AceCount     = New-Field 3 "Int16"
+            Sbz2         = New-Field 4 "Int16"
+        } | Out-Null
+}
+if (-not ([PSTypeName]'SID_AND_ATTRIBUTES').Type) {
+    $module = New-InMemoryModule -ModuleName "SID_AND_ATTRIBUTES"
+    New-Struct `
+        -Module $module `
+        -FullName "SID_AND_ATTRIBUTES" `
+        -StructFields @{
+            Sid  = New-Field 0 "IntPtr"
+            Attributes = New-Field 1 "Int32"
+        } | Out-Null
+}
+if (-not ([PSTypeName]'SECURITY_DESCRIPTOR').Type) {
+    $module = New-InMemoryModule -ModuleName "SECURITY_DESCRIPTOR"
+    New-Struct -Module $module -FullName "SECURITY_DESCRIPTOR" -StructFields @{
+        Revision    = New-Field 0 "Byte"
+        Sbz1        = New-Field 1 "Byte"
+        Control     = New-Field 2 "Int16"
+        Owner       = New-Field 3 "IntPtr"
+        Group       = New-Field 4 "IntPtr"
+        Sacl        = New-Field 5 "IntPtr"
+        Dacl        = New-Field 6 "IntPtr"
+    } | Out-Null
+}
+if (-not ([PSTypeName]'ACL_SIZE_INFORMATION').Type) {
+        $module = New-InMemoryModule -ModuleName "ACL_SIZE_INFORMATION"
+        New-Struct `
+            -Module $module `
+            -FullName "ACL_SIZE_INFORMATION" `
+            -StructFields @{
+                AceCount       = New-Field 0 "Int32"
+                AclBytesInUse  = New-Field 1 "Int32"
+                AclBytesFree   = New-Field 2 "Int32"
+            } | Out-Null
+    }
+
+function Get-Dacl {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [IntPtr]$Handle = [IntPtr]::Zero
+    )
+
+    if (!(IsValid-IntPtr $Handle)) {
+        return
+    }
+
+    # Query Security Descriptor size
+    $LengthNeeded = 0x00
+    $DACL_SECURITY_INFORMATION = 0x04
+
+    $AceHelper::NtQuerySecurityObject(
+        $Handle,
+        $DACL_SECURITY_INFORMATION,
+        [IntPtr]::Zero,
+        0x00,
+        [ref]$LengthNeeded
+    ) | Out-Null
+
+    if ($LengthNeeded -lt 0) {
+        Write-Verbose "NtQuerySecurityObject failed to determine length."
+        return $null
+    }
+
+    # Allocate memory for the security descriptor
+    $sd = New-IntPtr -Size $LengthNeeded
+    $status = $AceHelper::NtQuerySecurityObject(
+        $Handle,
+        $DACL_SECURITY_INFORMATION,
+        $sd,
+        $LengthNeeded,
+        [ref]$LengthNeeded
+    )
+
+    if ($status -lt 0x00) {
+        Write-Verbose "NtQuerySecurityObject failed with status: $status"
+        Free-IntPtr $sd
+        return (
+            [PSCustomObject]@{
+                Count = 0
+                Size = 0
+                SD   = [IntPtr]::Zero
+                Handle = [IntPtr]::Zero
+        })
+    }
+
+    $AclHandle = [IntPtr]::Zero
+    $sdNew = [SECURITY_DESCRIPTOR]$sd
+    
+    if ($sdNew.Revision -ne 0x01) {
+        Free-IntPtr $sd
+        throw "Not a valid SECURITY_DESCRIPTOR .!"
+    }
+    
+    if ([bool]($sdNew.Control -band 0x04) -and (
+        ([Marshal]::ReadByte($sd,0x02) -band 0x04) -ne 0x00)) {
+        if ($sdNew.Control -ge 0x00) {
+            # *(_QWORD *)(a1 + 32);
+            $AclHandle = $sdNew.Dacl
+        } elseif ([Marshal]::ReadInt32($sd, 16) -ne 0x00) {
+            # a1 + *(unsigned int *)(a1 + 16);
+            $AclHandle = [IntPtr]::Add($sd, [Marshal]::ReadInt32($sd, 16))
+        }
+        $Info = [ACL]$AclHandle
+    } else {
+        Free-IntPtr $sd
+        return (
+            [PSCustomObject]@{
+                Count = 0
+                Size = 0
+                SD   = [IntPtr]::Zero
+                Handle = [IntPtr]::Zero
+        })
+    }
+
+    <#
+    # Extract DACL
+    $Dacl = [IntPtr]::Zero
+    [bool]$DaclPresent = $false
+    [bool]$DaclDefaulted = $false
+
+    Invoke-UnmanagedMethod `
+        -Dll ntdll `
+        -Function RtlGetDaclSecurityDescriptor `
+        -Values @(
+            $sd,
+            [ref]$DaclPresent,
+            [ref]$Dacl,
+            [ref]$DaclDefaulted
+        ) | Out-Null
+
+    if (!(IsValid-IntPtr $Dacl)) {
+        Write-Verbose "Invalid DACL pointer."
+        Free-IntPtr $sd
+        return $null
+    }
+
+    $AclSizeInfoObj = New-Object 'ACL_SIZE_INFORMATION'
+    $AclSizeInfoObj.AclBytesInUse = [Marshal]::SizeOf([Type]'ACL')
+    $AclSizeInfo = New-IntPtr -Object $AclSizeInfoObj
+    $AclInformationLength = [Marshal]::SizeOf([Type]'ACL_SIZE_INFORMATION')
+    Invoke-UnmanagedMethod ntdll RtlQueryInformationAcl -Values @(
+        $Dacl,
+        $AclSizeInfo,
+        $AclInformationLength,
+        0x02
+    ) | Out-Null
+    $Info = [ACL_SIZE_INFORMATION]$AclSizeInfo
+    Free-IntPtr $AclSizeInfo
+    #>
+
+    # Return structured output
+    [PSCustomObject]@{
+        Count = $Info.AceCount
+        Size = $Info.AclSize
+        SD   = $sd
+        Handle = $AclHandle
+    }
+}
+function Enum-Dacl {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [IntPtr]$Handle
+    )
+
+    if (!(IsValid-IntPtr $Handle)) {
+        Write-Verbose "Invalid ACL pointer."
+        return $null
+    }
+    $idx = 0
+    $AceCount = ([ACL]$Handle).AceCount
+    $SidOffset = [Marshal]::OffsetOf([Type]'ACE', 'SidStart')
+    $AceList = New-Object System.Collections.Generic.List[object]
+    $offset = 0x08
+    while ($idx -lt $AceCount) {
+        $Ace = [IntPtr]::Add($Handle, $offset)
+        $AceStruct = [ACE]$Ace
+
+        $SidString = Sid-Helper -pSid ([IntPtr]::Add($Ace, $SidOffset))
+        $Account = try { (New-Object System.Security.Principal.SecurityIdentifier($SidString)).Translate([System.Security.Principal.NTAccount]).Value} catch { "N/A" }
+
+        $AceStruct = [ACE]$Ace
+        $AceInfo = [PSCustomObject]@{
+            Index     = $idx
+            AceType   = $AceStruct.AceType
+            AceFlags  = $AceStruct.AceFlags
+            AceSize   = $AceStruct.AceSize
+            Mask      = ('0x{0:X8}' -f $AceStruct.Mask)
+            SID       = $SidString
+            Account   = $Account
+            Handle    = $Ace
+        }
+        $AceList.Add($AceInfo) | Out-Null
+        
+        $idx+= 1
+        $offset += $AceStruct.AceSize
+    }
+
+    <#
+    for ($Index = 0; $Index -lt $AceCount; $Index++) {
+        $Ace = [IntPtr]::Zero
+        $status = Invoke-UnmanagedMethod ntdll RtlGetAce -Values @(
+            $Handle,
+            $Index,
+            [ref]$Ace
+        )
+
+        if ($status -lt 0x00 -or !(IsValid-IntPtr $Ace)) {
+            Write-Verbose "Failed to get ACE at index $Index (Status: $status)"
+            continue
+        }
+    }
+    #>
+
+    # Return all ACEs
+    return $AceList
+}
+function ReBuild-Dacl {
+    param(
+        [List[object]]$AceList,
+        [PsObject[]]$UpdateFrom
+    )
+ 
+    if (-not $AceList -or $AceList.Count -eq 0) { return $null }
+    $aclHeaderSize = [Marshal]::SizeOf([Type]'ACL')
+    $totalAceSize = ($AceList | Measure-Object -Property AceSize -Sum).Sum
+    $aclSize = [Math]::Ceiling(($aclHeaderSize + $totalAceSize) / 4) * 4
+
+    if ($UpdateFrom) {
+        foreach ($obj in $UpdateFrom) {
+            $Count = [Marshal]::ReadByte($obj.pSid, 0x01)
+            # 0x08 Base Ace, 0x08 Base Sid, 4 * Count
+            $objTotalSize = [Math]::Ceiling((0x08 + 0x08 + (0x04 * $Count)) / 4) * 4
+            $aclSize += $objTotalSize
+        }
+    }
+
+    $offset = 0x08
+    $AceCount = $AceList.Count
+    $newAclPtr = New-IntPtr -Size $aclSize
+
+    if ($AsNative) {
+        
+        #$status = Invoke-UnmanagedMethod ntdll RtlCreateAcl -Values @(
+        #    $newAclPtr, $aclSize, 0x02)
+        #if ($status -lt 0x00) {
+        #    throw "RtlCreateAcl failure .!"
+        #}
+
+        $aclData = New-Object 'ACL'
+        $aclData.AceCount = 0x00
+        $aclData.AclSize = $aclSize
+        $aclData.AclRevision = 0x02
+        [marshal]::StructureToPtr($aclData, $newAclPtr, $False)
+
+    } else {
+
+        $aclData = New-Object 'ACL'
+        $aclData.AceCount = $AceCount
+        $aclData.AclSize = $aclSize
+        $aclData.AclRevision = 0x02
+        [marshal]::StructureToPtr($aclData, $newAclPtr, $False)
+    }
+
+    foreach ($ace in $AceList) {
+        if (IsValid-IntPtr $ace.Handle) {
+            if ($AsNative) {
+                $status = Invoke-UnmanagedMethod ntdll RtlAddAce -Values @(
+                    $newAclPtr, 0x02, 0xffffffff, $ace.Handle, $ace.AceSize)
+                if ($status -lt 0) {
+                Write-Warning "Failed to add ACE at index $($ace.Index)"
+                }
+            } else {
+                $Global:ntdll::RtlMoveMemory(
+                    ([IntPtr]::Add($newAclPtr, $offset)),
+                    $ace.Handle,
+                    [UintPtr]::new($ace.AceSize)
+                )
+                $offset += $ace.AceSize
+            }
+        }
+    }
+
+    if ($UpdateFrom) {
+        foreach ($obj in $UpdateFrom) {
+            if ($AsNative) {
+                switch ($obj.Mode) {
+                    "Allowed" {
+                        $status = Invoke-UnmanagedMethod ntdll RtlAddAccessAllowedAceEx -Values @(
+                            $newAclPtr,
+                            0x02,                     # ACL_REVISION
+                            [Int32]$obj.Flags,        # ACE Flags
+                            [Int32]$obj.Access,       # Access Mask
+                            [IntPtr]$obj.pSid         # SID Pointer
+                        )
+                        break
+                    }
+                    "Denied" {
+                        $status = Invoke-UnmanagedMethod ntdll RtlAddAccessDeniedAceEx -Values @(
+                            $newAclPtr,
+                            0x02,                     # ACL_REVISION
+                            [Int32]$obj.Flags,        # ACE Flags
+                            [Int32]$obj.Access,       # Access Mask
+                            [IntPtr]$obj.pSid         # SID Pointer
+                        )
+                        break
+                    }
+                    default {
+                        Write-Warning "Unsupported ACE Mode: $($obj.Mode)"
+                        Parse-ErrorMessage $status
+                        break
+                    }
+                }
+                
+                if ($status -lt 0) {
+                    Write-Warning "Failed to add ACE for SID: $($obj.pSid)"
+                }
+
+          # ~~~~~~~! $
+            } else {
+          # ~~~~~~~! $
+
+                # 0x08 + (Count * 0x04) // [Count, Offset 0x01]
+                $SidSize = 0x08 + (([Int32][Marshal]::ReadByte([IntPtr]$obj.pSid, 0x01)) * 0x04)
+
+                $newAce = New-Object 'Ace'
+                $newAce.AceSize  = 0x08 + $SidSize
+                $newAce.AceType  = if ($obj.Mode -eq 'Allowed') { 0 } else { 1 }
+                $newAce.AceFlags = [Int32]$obj.Flags
+                $newAce.Mask     = [Int32]$obj.Access
+
+                $newAcePtr = New-IntPtr $newAce.AceSize
+                [Marshal]::StructureToPtr($newAce, $newAcePtr, $False)
+            
+                # ($offset+0x08) // Sid Start
+                $Global:ntdll::RtlMoveMemory(
+                    ([IntPtr]::Add($newAclPtr, $offset)),
+                    $newAcePtr,
+                    [UintPtr]::new($newAce.AceSize)
+                )
+
+                # ($offset+0x08) // Sid Start
+                $Global:ntdll::RtlMoveMemory(
+                    ([IntPtr]::Add($newAclPtr, ($offset+0x08))),
+                    [IntPtr]$obj.pSid,
+                    [UintPtr]::new($SidSize)
+                )
+
+                # next memory Offset
+                $AceCount += 1
+                $offset += $newAce.AceSize
+
+                # CLean Object
+                Free-IntPtr $newAcePtr
+            }
+        }
+    }
+    
+    if (!$AsNative) {
+        $aclData.AceCount = $AceCount
+        [marshal]::StructureToPtr($aclData, $newAclPtr, $False)
+	}
+    return [PSCustomObject]@{
+        Handle = $newAclPtr
+        Size   = $aclSize
+    }
+}
+function Set-ObjectSecurity {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [IntPtr]$ObjectHandle,
+
+        [Parameter(Mandatory = $true)]
+        [IntPtr]$Acl
+    )
+
+    $sdNew = New-Object 'SECURITY_DESCRIPTOR'
+    $sdNew.Revision = 0x01
+    $sdNew.Control =  0x0C
+    $sdNew.Dacl = $Acl
+    
+    $sdSize = [Marshal]::SizeOf([Type]'SECURITY_DESCRIPTOR')
+    $sdPtr = New-IntPtr -Size $sdSize
+    [Marshal]::StructureToPtr($sdNew, $sdPtr, $False)
+    
+    <#
+    $status = Invoke-UnmanagedMethod NTDLL.dll RtlCreateSecurityDescriptor -Values @(
+        $sdPtr, 0x01
+    )
+    if ($status -lt 0x00) {
+        Free-IntPtr $sdPtr
+        throw "InitializeSecurityDescriptor failed." 
+    }
+
+    $status = Invoke-UnmanagedMethod NTDLL.dll RtlSetDaclSecurityDescriptor -Values @(
+        $sdPtr,
+        $true,   # bDaclPresent
+        $Acl     # pointer to rebuilt ACL
+        $false   # bDaclDefaulted
+    )
+    if ($status -lt 0x00) {
+        Free-IntPtr $sdPtr
+        throw "RtlSetDaclSecurityDescriptor failed." 
+    }
+    #>
+
+    $status = $AceHelper::NtSetSecurityObject(
+        $ObjectHandle, 0x00000004, $sdPtr
+    )
+    if ($status -lt 0x00) {
+        throw "NtSetSecurityObject failed." 
+    }
+    Free-IntPtr $sdPtr
+    return $true
+}
+function Get-LogonSid {
+    param (
+        [Parameter(Mandatory = $true)]
+        [IntPtr]$hToken
+    )
+
+    $tokenInfoLength = 0
+    $Global:advapi32::GetTokenInformation($hToken, 0x02, [IntPtr]0, 0, [ref]$tokenInfoLength) | Out-Null
+    if ($tokenInfoLength -le 0) {
+        throw "GetTokenInformation failed .!"
+    }
+    $tokenInfoPtr = New-IntPtr -Size $tokenInfoLength
+    if (0 -eq (
+        $Global:advapi32::GetTokenInformation($hToken, 0x02, $tokenInfoPtr, $tokenInfoLength, [ref]$tokenInfoLength))) { 
+            throw "GetTokenInformation failed on second call" }
+    
+    try {
+        $idx = 0x00
+        $groupCount = [marshal]::ReadInt32($tokenInfoPtr, 0x00)
+        while ($idx -lt $groupCount) {
+            $groupPtr = [IntPtr]::Add($tokenInfoPtr, 0x08 + ($idx*0x10))
+            $groupInfo = [SID_AND_ATTRIBUTES]$groupPtr
+            if (($groupInfo.Attributes -band 0xC0000000) -eq 0xC0000000) {
+                return (
+                    Sid-Helper -pSid $groupInfo.Sid
+                )
+                break
+            }
+            $idx++
+        }
+    }
+    finally {
+        Free-IntPtr $tokenInfoPtr
+    }
+}
+#endregion
+
 #region "GUID"
 <#
   A utility function for generating, converting, and comparing GUIDs.
@@ -7257,7 +7810,7 @@ Function Adjust-TokenPrivileges {
                       $Global:advapi32::LookupPrivilegeNameW([IntPtr]::Zero, [ref]$luid, $namePtr, [ref]$size) | Out-Null
                       $privName = [Marshal]::PtrToStringUni($namePtr)
                     } else {
-                        $privName = 'N\A'
+                        $privName = 'N/A'
                     }
                     $privileges += [PSCustomObject]@{
                         Name    = $privName
@@ -9319,7 +9872,8 @@ Add-Type $tokenHelperCode -Language CSharp -ErrorAction Stop
 enum VistaMode {
     Auto   = 0
     DotNet = 1
-    Api    = 2
+    PS1    = 2
+    Api    = 3
 }
 enum TOKEN_ACCESS {
     STANDARD          = 0x000F0000
@@ -9972,6 +10526,15 @@ Function Process-UserToken {
 
             $aceRemoved = $false
             $SecurityDescriptor = $obj | Get-NtSecurityDescriptor
+            $obj.SetSecurityDescriptor(
+                (new-NtSecurityDescriptor -Dacl (
+                    $obj | Get-NtSecurityDescriptor | Select-Object -ExpandProperty Dacl | ? { !($_.Sid.ToString() -eq $targetSid -and $_.Type -eq 'Allowed') }
+                )),
+                'Dacl',
+                $true
+            )
+            
+            <#
             $i = 0
             $Max = $SecurityDescriptor.Dacl.Count
 
@@ -10011,6 +10574,7 @@ Function Process-UserToken {
                   Write-Host ("No matching ACE found in DACL of {0} for SID {1}" -f $obj.GetType().Name, $targetSid) -ForegroundColor Red
                 }
             }
+            #>
         }
     }
 
@@ -10049,11 +10613,14 @@ Function Process-UserToken {
     }
     #>
 
-    $DotNetMode = $Mode -ne [VistaMode]::Api
-    $NtCoreLib = [Bool]([PSTypeName]'NtCoreLib.NtToken').Type
-    $UseDotNet = $DotNetMode -and $NtCoreLib
-    
-    if (!$UseDotNet) {
+    $UseApi    = $Mode -eq [VistaMode]::Api
+    $UsePs1    = $Mode -eq [VistaMode]::PS1
+    $UseDotNet = $Mode -eq [VistaMode]::DotNet -and [Bool]([PSTypeName]'NtCoreLib.NtToken').Type
+    if ($Mode -eq [VistaMode]::Auto) {
+        $Mode = [VistaMode]::PS1
+    }
+
+    if ($UseApi) {
         if (-not ([Io.file]::Exists("c:\temp\dacl.dll"))) {
             try {
                 $base64String = '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'
@@ -10098,17 +10665,20 @@ Function Process-UserToken {
             @('OpenDesktopW',                 'User32.dll',   [intptr], @([string], [int], [int], [int])),
             @('SetTokenInformation',          'advapi32.dll', [bool],   @([IntPtr], [Int], [IntPtr], [Int])),
             @('GetCurrentThreadId',           'Kernel32.dll', [int],    @()),
-            @('WTSGetActiveConsoleSessionId', 'Kernel32.dll', [int],    @())
+            @('WTSGetActiveConsoleSessionId', 'Kernel32.dll', [int],    @()),
+            @('WTSQueryUserToken',            'Wtsapi32.dll', [Bool],   @([Uint32], [IntPtr].MakeByRefType())),
+            @('WinStationQueryInformationW',  'Winsta.dll',   [Bool],   @([Int32], [Int32], [Int32], [IntPtr], [Int32], [Int32].MakeByRefType()))
         ) | % {
             $Module.DefinePInvokeMethod(($_[0]), ($_[1]), 22, 1, [Type]($_[2]), [Type[]]($_[3]), 1, 3).SetImplementationFlags(128) # Def` 128, fail-safe 0 
         }
         $Token = $Module.CreateType()
-        Start-Sleep 1
     }
 
     if ($Params -ne $null) {
-        
-        if ($UseDotNet) {    
+
+       # !!!!!!!!!!!!!!!!!!!!!!!!!! ~ @
+        if ($UseDotNet) {
+       # !!!!!!!!!!!!!!!!!!!!!!!!!! ~ @
             
             ## Run this in New Object / current objects, safe, will not kill the window
             ## Using .net libary < NtObjectManager >, more safe to use
@@ -10128,7 +10698,7 @@ Function Process-UserToken {
             }
        
        # !!!!!!!!!!!!!!!!!!!!!!!!!! ~ @
-        } else {
+        } elseif ($UseApi) {
        # !!!!!!!!!!!!!!!!!!!!!!!!!! ~ @
             
             Invoke-UnmanagedMethod -Dll "C:\temp\dacl.dll" -Function RemoveAccessAllowedAcesBasedSID -Return bool -Values @([IntPtr]-1, $Params.LogonSid) | Out-Null
@@ -10142,6 +10712,39 @@ Function Process-UserToken {
             # Run this only in New Object, other, it kill the window
             if (-not $UseCurrent -and $RemoveAce) { 
               Invoke-UnmanagedMethod -Dll "C:\temp\dacl.dll" -Function RemoveAccessAllowedAcesBasedSID -Return bool -Values @([IntPtr]$Params.hWinSta, $Params.LogonSid)  | Out-Null
+            }
+
+      # !!!!!!!!! ~ @
+        } else {
+      # !!!!!!!!! ~ @
+            
+            $logonInfo = Sid-Helper -pSid $Params.LogonSid
+            $lastSub = $logonInfo -split '-' | select -Last 1| Out-String
+            # ~~~~~~~~~~~~~~ ~~~~~~~ !
+            $dacl = Get-Dacl ([IntPtr]-1)
+            $newAcl = ReBuild-Dacl (
+                Enum-Dacl $dacl.Handle | Where-Object { -not $_.Sid.ToString().EndsWith($lastSub.Trim()) }
+            ) #-AsNative
+            Set-ObjectSecurity ([IntPtr]-1) $newAcl.Handle
+            Free-IntPtr -handle $dacl.SD
+            Free-IntPtr -handle $newAcl.Handle
+            # ~~~~~~~~~~~~~~ ~~~~~~~ !
+            $dacl = Get-Dacl $Params.hDesktop
+            $newAcl = ReBuild-Dacl (
+                Enum-Dacl $dacl.Handle | Where-Object { -not $_.Sid.ToString().EndsWith($lastSub.Trim()) }
+            ) #-AsNative
+            Set-ObjectSecurity $Params.hDesktop $newAcl.Handle
+            Free-IntPtr -handle $dacl.SD
+            Free-IntPtr -handle $newAcl.Handle
+            # ~~~~~~~~~~~~~~ ~~~~~~~ !
+            if (-not $UseCurrent -and $RemoveAce) { 
+                $dacl = Get-Dacl $Params.hWinSta
+                $newAcl = ReBuild-Dacl (
+                    Enum-Dacl $dacl.Handle | Where-Object { -not $_.Sid.ToString().EndsWith($lastSub.Trim()) }
+                ) #-AsNative
+                Set-ObjectSecurity $Params.hWinSta $newAcl.Handle
+                Free-IntPtr -handle $dacl.SD
+                Free-IntPtr -handle $newAcl.Handle
             }
         }
 
@@ -10157,13 +10760,18 @@ Function Process-UserToken {
                 Free-IntPtr -handle ($Params.hWinSta)  -Method WindowStation
             }
         }
-    }
-    elseif ($hToken -ne [IntPtr]::Zero) {
+
+  # !!!!!!!!!!!!!!!!!!! ################ ~ @
+    } elseif ($hToken -ne [IntPtr]::Zero) {
+  # !!!!!!!!!!!!!!!!!!! ################ ~ @
+
         $nullPtr = [IntPtr]::Zero
         $hDesktop, $hWinSta = $null, $null
         $activeSessionIdPtr, $LogonSid = $null, $null
 
+       # !!!!!!!!!!!!!!!!!!! ~ @
         if ($UseDotNet) {
+       # !!!!!!!!!!!!!!!!!!! ~ @
             if ($UseCurrent) {
                 $hProc = Get-NtProcess -Current -Access MaximumAllowed
                 $hDesktop = Get-NtDesktop -Current -Access MaximumAllowed
@@ -10190,12 +10798,19 @@ Function Process-UserToken {
                     "Desktop", $DesktopPath, $hWinSta, $DesktopAccess)
             }
         }
+       
+       # !!!!!!!!!!!!!!!!!!! ~ @
         elseif ($UseCurrent) {
+       # !!!!!!!!!!!!!!!!!!! ~ @
+
             $hWinSta = $Token::GetProcessWindowStation()
             $hDesktop = $Token::GetThreadDesktop(
                 ($Token::GetCurrentThreadId()))
-        }
-        else {
+       
+       # !!!!!!!!!!!!!!!!!!! ~ @
+        } else {
+       # !!!!!!!!!!!!!!!!!!! ~ @
+
             $hwinstaSave = $Token::GetProcessWindowStation()
             if (!(IsValid-IntPtr $hwinstaSave)) {
                 throw "Fail to get valid pointer using GetProcessWindowStation .!"
@@ -10212,7 +10827,10 @@ Function Process-UserToken {
             $Token::SetProcessWindowStation($hwinstaSave) | Out-Null
         }
 
+       # !!!!!!!!!!!!!!!!!!! ~ @
         if ($UseDotNet) {
+       # !!!!!!!!!!!!!!!!!!! ~ @
+
             $logonInfo = Get-NtTokenSid -Token ([NtCoreLib.NtToken]::FromHandle($hToken)) -LogonId
             $LogonSid = New-IntPtr -Data ($logonInfo.ToArray())
             # ~~~~~~~~~~~~
@@ -10245,8 +10863,10 @@ Function Process-UserToken {
                 $logonInfo.ToString())
             $hWinSta.SetSecurityDescriptor($SecurityDescriptor, 'Dacl', $true)
 
-        }  else {
-            
+       # !!!!!!!!!!!!!!!!!!! ~ @
+        } elseif ($UseApi) {
+       # !!!!!!!!!!!!!!!!!!! ~ @
+                   
             $LogonSid = [IntPtr]::Zero
             
             ## Call helper DLL
@@ -10268,6 +10888,69 @@ Function Process-UserToken {
             if (!(Invoke-UnmanagedMethod -Dll "C:\temp\dacl.dll" -Function AddAceToProcess -Return bool -Values @(0x00, $LogonSid))) {
                 throw "AddAceToProcess helper failed .!"
             }
+
+       # !!!!!!!!!!!!!!!!!!! ~ @
+        } else {
+       # !!!!!!!!!!!!!!!!!!! ~ @            
+            
+            # Get SD & ACL
+            $logonInfo = Get-LogonSid $hToken
+            $LogonSid = Sid-Helper -pValue $logonInfo
+            $lastSub = $logonInfo -split '-' | select -Last 1| Out-String
+            # ~~~~~~~~~~~~
+            $dacl = Get-Dacl -Handle ([IntPtr]-1)
+            $AceArr = Enum-Dacl -Handle $dacl.Handle
+            $newAcl = ReBuild-Dacl `
+                -AceList $AceArr `
+                -UpdateFrom @(
+                    [PSCustomObject]@{
+                        Flags  = 0x00
+                        Access = Bor @(0x0040, 0x0080, 0x0400)
+                        pSid   = $LogonSid
+                        Mode   = "Allowed" # "Denied"
+                    }
+                )
+            Set-ObjectSecurity ([IntPtr]-1) $newAcl.Handle
+            Free-IntPtr -handle $dacl.SD
+            Free-IntPtr -handle $newAcl.Handle
+            # ~~~~~~~~~~~~
+            $dacl = Get-Dacl -Handle $hDesktop
+            $AceArr = Enum-Dacl -Handle $dacl.Handle
+            $newAcl = ReBuild-Dacl `
+                -AceList $AceArr `
+                -UpdateFrom @(
+                    [PSCustomObject]@{ 
+                        Flags  = 0x00
+                        Access = Bor @(0x0004L,0x0002L,0x0040L,0x0008L,0x0020L,0x0010L,0x0001L,0x0100L,0x0080L,0x000F0000L)
+                        pSid   = $LogonSid
+                        Mode   = "Allowed" # "Denied"
+                    }
+                )
+            Set-ObjectSecurity $hDesktop $newAcl.Handle
+            Free-IntPtr -handle $dacl.SD
+            Free-IntPtr -handle $newAcl.Handle
+            # ~~~~~~~~~~~~
+            $dacl = Get-Dacl -Handle $hWinSta
+            $AceArr = Enum-Dacl -Handle $dacl.Handle
+            $newAcl = ReBuild-Dacl `
+                -AceList $AceArr `
+                -UpdateFrom @(
+                    [PSCustomObject]@{ 
+                        Flags  = 0x2 -bor 0x8 -bor 0x1
+                        Access = 0x80000000 -bor 0x40000000 -bor 0x20000000 -bor 0x10000000
+                        pSid   = $LogonSid
+                        Mode   = "Allowed" # "Denied"
+                    },
+                    [PSCustomObject]@{ 
+                        Flags  = 0x4
+                        Access = 0x0001 -bor 0x0002 -bor 0x0004 -bor 0x0008 -bor 0x0010 -bor 0x0020 -bor 0x0040 -bor 0x0100 -bor 0x0200
+                        pSid   = $LogonSid
+                        Mode   = "Allowed" # "Denied"
+                    }
+                )
+            Set-ObjectSecurity $hWinSta $newAcl.Handle
+            Free-IntPtr -handle $dacl.SD
+            Free-IntPtr -handle $newAcl.Handle
         }
         
         ## any other case will fail
@@ -10898,7 +11581,7 @@ Function Invoke-ProcessAsUser {
         $SESSION = $Module.GetTypes()[0]
     }
     catch {
-        $Module = [AppDomain]::CurrentDomain.DefineDynamicAssembly("null", 1).DefineDynamicModule("Token", $False).DefineType("null")
+        $Module = [AppDomain]::CurrentDomain.DefineDynamicAssembly("null", 1).DefineDynamicModule("SESSION", $False).DefineType("null")
         @(
             @('WTSGetActiveConsoleSessionId', 'Kernel32.dll', [int],    @()),
             @('WTSQueryUserToken',            'Wtsapi32.dll', [Bool],   @([Uint32], [IntPtr].MakeByRefType())),
