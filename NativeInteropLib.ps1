@@ -6689,6 +6689,9 @@ function Free-Variant {
 #region DACL
 
 <#
+Clear-Host
+Write-Host
+
 $hToken = Obtain-UserToken `
     -UserName Administrator `
     -Password 0444
@@ -6706,9 +6709,9 @@ $lastSub = $logonInfo -split '-' | select -Last 1| Out-String
 
 # Add ACE
 $AceArr = Enum-Dacl -Handle $dacl.Handle
-$newAcl = ReBuild-Dacl `
+$newAcl = Update-Dacl `
     -AceList $AceArr `
-    -UpdateFrom @(
+    -AceToAdd @(
         [PSCustomObject]@{ 
             Flags   = 0x2 -bor 0x8 -bor 0x1
             Access = 0x80000000 -bor 0x40000000 -bor 0x20000000 -bor 0x10000000
@@ -6727,7 +6730,7 @@ Write-Host ( "Set Object Results : {0}" -f (Set-ObjectSecurity $hStation $newAcl
 Write-Host
 
 # Remove ACE
-$newAcl = ReBuild-Dacl (
+$newAcl = Update-Dacl -AceList (
     Enum-Dacl $newAcl.Handle | Where-Object { -not $_.Sid.ToString().EndsWith($lastSub.Trim()) }
 )
 Write-Host ("Count : {0}" -f ([ACL]$newAcl.Handle).AceCount) -ForegroundColor Green
@@ -6998,19 +7001,95 @@ function Enum-Dacl {
     # Return all ACEs
     return $AceList
 }
-function ReBuild-Dacl {
+function New-AceList {
+    [CmdletBinding()]
     param(
-        [List[object]]$AceList,
-        [PsObject[]]$UpdateFrom
+        [Parameter(Mandatory = $true)]
+        [Int32[]]$Flags,  # Expects an array of Flags
+        
+        [Parameter(Mandatory = $true)]
+        [Int32[]]$Access, # Expects an array of Access Masks
+
+        [Parameter(Mandatory = $true)]
+        [IntPtr[]]$pSid,  # Expects an array of SID Pointers
+
+        [Parameter(Mandatory = $true)]
+        [string[]]$Mode   # Expects an array of Modes ("Allowed" or "Denied")
     )
+    
+    if ($Flags.Count -ne $Access.Count -or $Flags.Count -ne $pSid.Count -or $Flags.Count -ne $Mode.Count) {
+        throw "Input arrays (Flags, Access, pSid, Mode) must have the same number of elements."
+    }
+
+    $AceList = @()
+    for ($i = 0; $i -lt $Flags.Count; $i++) {
+        $AceList += [PSCustomObject]@{
+            Flags  = $Flags[$i]
+            Access = $Access[$i]
+            pSid   = $pSid[$i]
+            Mode   = $Mode[$i]
+        }
+    }
+    return $AceList
+}
+function Update-Dacl {
+    [CmdletBinding(DefaultParameterSetName='FromHandle')]
+    param(
+        # Source 1: Existing ACE list objects (used if -ExistingAclHandle is not set)
+        [Parameter(ParameterSetName='FromList')]
+        [List[object]]$AceList,
+        
+        # Source 2: Existing DACL memory pointer (used if -AceList is not set)
+        [Parameter(ParameterSetName='FromHandle')]
+        [IntPtr]$AclHandle = [IntPtr]::Zero,
+
+        # New ACEs to append, regardless of the source
+        [Parameter()]
+        [PsObject[]]$AceToAdd
+    )
+
+    <#
+    .SYNOPSIS
+    Rebuilds a DACL memory pointer from an existing handle or ACE list.
+    
+    .DESCRIPTION
+    Creates a new DACL by combining base ACEs (from -AclHandle or -AceList) with new ACEs (-AceToAdd).
+    Used for adding, filtering, or copying a DACL.
+    
+    .NOTES
+    -AclHandle enumerates ACEs, frees the old handle, and REQUIRES -AceToAdd.
+    -AceList is used for filtered/pre-processed ACEs. Always allocates new memory.
+    #>
+
+    # Parameter Validation and Base List Determination
+    [bool]$isAList     = $AceList -and $AceList.Count -gt 0
+    [bool]$IsAhandle   = IsValid-IntPtr -handle $AclHandle
+    [bool]$HaveAceList = $AceToAdd -and $AceToAdd.Count -gt 0
+
+    # Ensure mutually exclusive source AND (Handle requires update source)
+    # $isAList -xor $IsAhandle ==> TRUE when isAList Or IsAhandle, Not both .!
+    if (!($isAList -xor $IsAhandle) -or ($IsAhandle -and -not $HaveAceList)) {
+        Write-Host
+        Write-Warning "This call is NOT allowed by PowerShell due to parameter set conflict"
+        Write-Warning "Please use either -AceList OR -AclHandle."
+        Write-Warning "Note: -AclHandle must be paired with an -AceToAdd."
+        return $null
+    }
+
+    $BaseAceList = @()
+    if (IsValid-IntPtr $AclHandle) {
+        $BaseAceList = Enum-Dacl -Handle $AclHandle
+    } elseif ($AceList) {
+        $BaseAceList = $AceList
+    }
  
-    if (-not $AceList -or $AceList.Count -eq 0) { return $null }
+    if (-not $BaseAceList -or $BaseAceList.Count -eq 0) { return $null }
     $aclHeaderSize = [Marshal]::SizeOf([Type]'ACL')
-    $totalAceSize = ($AceList | Measure-Object -Property AceSize -Sum).Sum
+    $totalAceSize = ($BaseAceList | Measure-Object -Property AceSize -Sum).Sum
     $aclSize = [Math]::Ceiling(($aclHeaderSize + $totalAceSize) / 4) * 4
 
-    if ($UpdateFrom) {
-        foreach ($obj in $UpdateFrom) {
+    if ($AceToAdd) {
+        foreach ($obj in $AceToAdd) {
             $Count = [Marshal]::ReadByte($obj.pSid, 0x01)
             # 0x08 Base Ace, 0x08 Base Sid, 4 * Count
             $objTotalSize = [Math]::Ceiling((0x08 + 0x08 + (0x04 * $Count)) / 4) * 4
@@ -7019,7 +7098,7 @@ function ReBuild-Dacl {
     }
 
     $offset = 0x08
-    $AceCount = $AceList.Count
+    $AceCount = $BaseAceList.Count
     $newAclPtr = New-IntPtr -Size $aclSize
 
     if ($AsNative) {
@@ -7045,7 +7124,7 @@ function ReBuild-Dacl {
         [marshal]::StructureToPtr($aclData, $newAclPtr, $False)
     }
 
-    foreach ($ace in $AceList) {
+    foreach ($ace in $BaseAceList) {
         if (IsValid-IntPtr $ace.Handle) {
             if ($AsNative) {
                 $status = Invoke-UnmanagedMethod ntdll RtlAddAce -Values @(
@@ -7064,8 +7143,8 @@ function ReBuild-Dacl {
         }
     }
 
-    if ($UpdateFrom) {
-        foreach ($obj in $UpdateFrom) {
+    if ($AceToAdd) {
+        foreach ($obj in $AceToAdd) {
             if ($AsNative) {
                 switch ($obj.Mode) {
                     "Allowed" {
@@ -7219,6 +7298,9 @@ function Get-LogonSid {
         while ($idx -lt $groupCount) {
             $groupPtr = [IntPtr]::Add($tokenInfoPtr, 0x08 + ($idx*0x10))
             $groupInfo = [SID_AND_ATTRIBUTES]$groupPtr
+            
+            # SE_GROUP_LOGON_ID 0xC0000000L
+            # https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-token_groups
             if (($groupInfo.Attributes -band 0xC0000000) -eq 0xC0000000) {
                 return (
                     Sid-Helper -pSid $groupInfo.Sid
@@ -10722,26 +10804,26 @@ Function Process-UserToken {
             $lastSub = $logonInfo -split '-' | select -Last 1| Out-String
             # ~~~~~~~~~~~~~~ ~~~~~~~ !
             $dacl = Get-Dacl ([IntPtr]-1)
-            $newAcl = ReBuild-Dacl (
+            $newAcl = Update-Dacl -AceList (
                 Enum-Dacl $dacl.Handle | Where-Object { -not $_.Sid.ToString().EndsWith($lastSub.Trim()) }
-            ) #-AsNative
+            )
             Set-ObjectSecurity ([IntPtr]-1) $newAcl.Handle
             Free-IntPtr -handle $dacl.SD
             Free-IntPtr -handle $newAcl.Handle
             # ~~~~~~~~~~~~~~ ~~~~~~~ !
             $dacl = Get-Dacl $Params.hDesktop
-            $newAcl = ReBuild-Dacl (
+            $newAcl = Update-Dacl -AceList (
                 Enum-Dacl $dacl.Handle | Where-Object { -not $_.Sid.ToString().EndsWith($lastSub.Trim()) }
-            ) #-AsNative
+            )
             Set-ObjectSecurity $Params.hDesktop $newAcl.Handle
             Free-IntPtr -handle $dacl.SD
             Free-IntPtr -handle $newAcl.Handle
             # ~~~~~~~~~~~~~~ ~~~~~~~ !
             if (-not $UseCurrent -and $RemoveAce) { 
                 $dacl = Get-Dacl $Params.hWinSta
-                $newAcl = ReBuild-Dacl (
+                $newAcl = Update-Dacl -AceList (
                     Enum-Dacl $dacl.Handle | Where-Object { -not $_.Sid.ToString().EndsWith($lastSub.Trim()) }
-                ) #-AsNative
+                )
                 Set-ObjectSecurity $Params.hWinSta $newAcl.Handle
                 Free-IntPtr -handle $dacl.SD
                 Free-IntPtr -handle $newAcl.Handle
@@ -10900,55 +10982,40 @@ Function Process-UserToken {
             $lastSub = $logonInfo -split '-' | select -Last 1| Out-String
             # ~~~~~~~~~~~~ ~~~~~~~~~~~ $
             $dacl = Get-Dacl -Handle ([IntPtr]-1)
-            $AceArr = Enum-Dacl -Handle $dacl.Handle
-            $newAcl = ReBuild-Dacl `
-                -AceList $AceArr `
-                -UpdateFrom @(
-                    [PSCustomObject]@{
-                        Flags  = 0x00
-                        Access = Bor @(0x0040, 0x0080, 0x0400)
-                        pSid   = $LogonSid
-                        Mode   = "Allowed" # "Denied"
-                    }
-                )
+            $AceToAdd = New-AceList `
+                -Flags @(0x00) `
+                -Access @((Bor @(0x0040, 0x0080, 0x0400))) `
+                -pSid @($LogonSid) `
+                -Mode @("Allowed")
+            $newAcl = Update-Dacl `
+                -AclHandle $dacl.Handle `
+                -AceToAdd $AceToAdd
             Set-ObjectSecurity ([IntPtr]-1) $newAcl.Handle | Out-Null
             Free-IntPtr -handle $dacl.SD
             Free-IntPtr -handle $newAcl.Handle
             # ~~~~~~~~~~~~ ~~~~~~~~~~~ $
             $dacl = Get-Dacl -Handle $hDesktop
-            $AceArr = Enum-Dacl -Handle $dacl.Handle
-            $newAcl = ReBuild-Dacl `
-                -AceList $AceArr `
-                -UpdateFrom @(
-                    [PSCustomObject]@{ 
-                        Flags  = 0x00
-                        Access = Bor @(0x0004L,0x0002L,0x0040L,0x0008L,0x0020L,0x0010L,0x0001L,0x0100L,0x0080L,0x000F0000L)
-                        pSid   = $LogonSid
-                        Mode   = "Allowed" # "Denied"
-                    }
-                )
+            $AceToAdd = New-AceList `
+                -Flags @(0x00) `
+                -Access @((Bor @(0x0004,0x0002,0x0040,0x0008,0x0020,0x0010,0x0001,0x0100,0x0080,0x000F0000))) `
+                -pSid @($LogonSid) `
+                -Mode @("Allowed")
+            $newAcl = Update-Dacl `
+                -AclHandle $dacl.Handle `
+                -AceToAdd $AceToAdd
             Set-ObjectSecurity $hDesktop $newAcl.Handle | Out-Null
             Free-IntPtr -handle $dacl.SD
             Free-IntPtr -handle $newAcl.Handle
             # ~~~~~~~~~~~~ ~~~~~~~~~~~ $
             $dacl = Get-Dacl -Handle $hWinSta
-            $AceArr = Enum-Dacl -Handle $dacl.Handle
-            $newAcl = ReBuild-Dacl `
-                -AceList $AceArr `
-                -UpdateFrom @(
-                    [PSCustomObject]@{ 
-                        Flags  = 0x2 -bor 0x8 -bor 0x1
-                        Access = 0x80000000 -bor 0x40000000 -bor 0x20000000 -bor 0x10000000
-                        pSid   = $LogonSid
-                        Mode   = "Allowed" # "Denied"
-                    },
-                    [PSCustomObject]@{ 
-                        Flags  = 0x4
-                        Access = 0x0001 -bor 0x0002 -bor 0x0004 -bor 0x0008 -bor 0x0010 -bor 0x0020 -bor 0x0040 -bor 0x0100 -bor 0x0200
-                        pSid   = $LogonSid
-                        Mode   = "Allowed" # "Denied"
-                    }
-                )
+            $AceToAdd = New-AceList `
+                -Flags @((Bor @(0x2, 0x8, 0x1)), 0x4) `
+                -Access @((Bor @(0x80000000, 0x40000000, 0x20000000, 0x10000000)), (Bor @(0x0001, 0x0002, 0x0004, 0x0008, 0x0010, 0x0020, 0x0040, 0x0100, 0x0200))) `
+                -pSid @($LogonSid, $LogonSid) `
+                -Mode @("Allowed", "Allowed")
+            $newAcl = Update-Dacl `
+                -AclHandle $dacl.Handle `
+                -AceToAdd $AceToAdd
             Set-ObjectSecurity $hWinSta $newAcl.Handle | Out-Null
             Free-IntPtr -handle $dacl.SD
             Free-IntPtr -handle $newAcl.Handle
@@ -11307,7 +11374,7 @@ Invoke-ProcessAsUser `
     -Password 0444 `
     -Mode Token `
     -RunAsConsole `
-    -VistaMode DotNet `
+    -VistaMode Auto `
     -SetVistaFlag -SetNewVista
 
 # Can be used with Any User
