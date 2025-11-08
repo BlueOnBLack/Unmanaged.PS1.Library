@@ -290,6 +290,14 @@ function Set-ObjectSecurity
 Get logon Sid of HToken From User login
 #>
 function Get-LogonSid
+
+<#
+Adjust Hidden feature of Windows. Etc.
+Adjust-Feature -FeatureId @(48796508) -State Disable
+Adjust-Feature -FeatureId @(48796508) -State Reset
+Adjust-Feature -FeatureId @(48796508) -State Enable
+#>
+function Adjust-Feature
 ````
 
 ## Code samples
