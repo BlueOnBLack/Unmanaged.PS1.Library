@@ -11547,7 +11547,7 @@ Function Invoke-Process {
         $CommandLinePtr = [Marshal]::StringToHGlobalUni($CommandLine)
         if ($UseDuplicatedToken) {
             $flags = 0x00000004 -bor 0x00000010
-            #$ret = Invoke-UnmanagedMethod -Dll Advapi32 -Function CreateProcessWithTokenW -CallingConvention StdCall -Return bool -CharSet Unicode -Values @(
+            # Call CreateProcessAsUserW (needs the duplicated Primary Token)
             $ret = $Global:advapi32::CreateProcessWithTokenW(
                 $tHandle,        # handle from process / user
                 0x00000001,      # LOGON_WITH_PROFILE
@@ -11560,7 +11560,7 @@ Function Invoke-Process {
                 $processInfo     # lpProcessInformation
             )
         } else {
-            # Call CreateProcessAsUserW (needs the duplicated Primary Token)
+            # Call CreateProcessW
             $ret = $Global:kernel32::CreateProcessW(
                 0, $CommandLinePtr, 0, 0, $false, $flags, 0, 0, $startupInfo, $processInfo)
         }
@@ -12055,7 +12055,7 @@ Invoke-NativeProcess `
 # Could fail to start if not system Account
 Write-Host 'Invoke-NativeProcess, with hToken' -ForegroundColor Green
 $hToken = Obtain-UserToken `
-    -UserName user `
+    -UserName Administrator `
     -Password 0444 `
     -loadProfile
 Invoke-NativeProcess `
@@ -12259,10 +12259,6 @@ function Get-EnvironmentBlockLength {
             ShowWindowFlags = if ([IntPtr]::Size -eq 8) { 0xA8 } else { 0x6C }
         }
 
-        # do not use,
-        # it cause memory error messege, in console window
-        # create WindowTitle, DesktopInfo, ShellInfo with fake value 00
-
         # Create Struct manually
         # to avoid memory error
 
@@ -12349,24 +12345,6 @@ function Get-EnvironmentBlockLength {
         $Length = [Marshal]::ReadInt16($NtImagePath)
         $Buffer = [Marshal]::ReadIntPtr([IntPtr]::Add($NtImagePath, [IntPtr]::Size))
 
-        <#
-            * PS_ATTRIBUTE_NUM - NtDoc
-            * https://ntdoc.m417z.com/ps_attribute_num
-
-            PsAttributeToken, // in HANDLE
-            PsAttributeClientId, // out PCLIENT_ID
-            PsAttributeParentProcess, // in HANDLE
-
-            * PsAttributeValue - NtDoc
-            * https://ntdoc.m417z.com/psattributevalue
-        
-            PS_ATTRIBUTE_TOKEN = 0x60002;
-            PS_ATTRIBUTE_PARENT_PROCESS = 0x60000;
-            PS_ATTRIBUTE_CLIENT_ID = 0x10003;
-            PS_ATTRIBUTE_IMAGE_NAME = 0x20005;
-            PS_ATTRIBUTE_IMAGE_INFO = 0x00006;
-        #>
-
         if ($Auto) {
             
             <#
@@ -12421,6 +12399,24 @@ function Get-EnvironmentBlockLength {
             write-warning "Length, MaximumLength = $Length, $MaximumLength"
             write-warning "Environment = $EnvStr"
         }
+
+        <#
+        * PS_ATTRIBUTE_NUM - NtDoc
+        * https://ntdoc.m417z.com/ps_attribute_num
+
+        PsAttributeToken, // in HANDLE
+        PsAttributeClientId, // out PCLIENT_ID
+        PsAttributeParentProcess, // in HANDLE
+
+        * PsAttributeValue - NtDoc
+        * https://ntdoc.m417z.com/psattributevalue
+        
+        PS_ATTRIBUTE_TOKEN = 0x60002;
+        PS_ATTRIBUTE_PARENT_PROCESS = 0x60000;
+        PS_ATTRIBUTE_CLIENT_ID = 0x10003;
+        PS_ATTRIBUTE_IMAGE_NAME = 0x20005;
+        PS_ATTRIBUTE_IMAGE_INFO = 0x00006;
+        #>
         
         # PS_ATTRIBUTE_IMAGE_NAME
         $AttributeListPtr = [IntPtr]::Add($AttributeList, 0x08)
@@ -12451,13 +12447,15 @@ function Get-EnvironmentBlockLength {
             $AttributeListPtr = [IntPtr]::Add($AttributeListPtr, $SizeOfAtt)
             Write-AttributeEntry $AttributeListPtr 0x06 $SectionImageSize $SectionImageInformation
 
+            # PS_CREATE_INFO - NtDoc
+            # https://ntdoc.m417z.com/ps_create_info
+
             # PS_CREATE_INFO, InitFlags = 3
-            $InitFlagsOffset = if ([IntPtr]::Size -gt 4) { 0x10 } else { 0x08 }
-            [Marshal]::WriteInt32($CreateInfo, $InitFlagsOffset, 0x3)
-            
+            $psOffset = if ([IntPtr]::Size -gt 4) { 0x10 } else { 0x08 }
+            [Marshal]::WriteInt32($CreateInfo, $psOffset, 0x3)
             # PS_CREATE_INFO, AdditionalFileAccess = FILE_READ_ATTRIBUTES, FILE_READ_DATA
-            $AdditionalFileAccessOffset = if ([IntPtr]::Size -gt 4) { 0x14 } else { 0xC }
-            [Marshal]::WriteInt32($CreateInfo, $AdditionalFileAccessOffset, [Int32](0x0080 -bor 0x0001))
+            $psOffset = if ([IntPtr]::Size -gt 4) { 0x14 } else { 0xC }
+            [Marshal]::WriteInt32($CreateInfo, $psOffset, [Int32](0x0080 -bor 0x0001))
 
             # PROCESS_CREATE_FLAGS_SUSPENDED,       0x00000200
             # THREAD_CREATE_FLAGS_CREATE_SUSPENDED, 0x00000001
