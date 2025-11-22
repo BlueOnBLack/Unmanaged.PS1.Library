@@ -27,19 +27,6 @@
 - Utilities to detect group membership (Administrator) and common system accounts.
 - Advanced forensic/research-only features (documented as research): low-level process introspection and syscall metadata extraction.
 
-## Legitimate use cases
-- Administrative scripting that needs to call a specific native API not exposed directly by PowerShell.
-- Forensic and incident response tooling that inspects process internals and gathers diagnostic data.
-- Interop test harnesses for native libraries and COM objects when building Windows integrations.
-- Security research and red-team/blue-team lab work, conducted in controlled environments with explicit permission.
-
-## Quick start
-> These are non-actionable installation hints. See the module manifest in `./src` for real install steps.
->
-> # PowerShell Low-Level Utilities
-
-A collection of PowerShell helper functions for working with Windows low-level APIs, pointers, memory, COM interfaces, tokens, syscalls and more.
-
 ## How to install
 ````powershell
 $adminRequired = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -62,6 +49,12 @@ Copy-Item -Path "$tempFolder\Unmanaged.PS1.Library-main\*" -Destination $moduleF
 Remove-Item -Path $zipFile -Force | Out-Null
 Remove-Item -Path $tempFolder -Recurse -Force | Out-Null
 ````
+
+## Legitimate use cases
+- Administrative scripting that needs to call a specific native API not exposed directly by PowerShell.
+- Forensic and incident response tooling that inspects process internals and gathers diagnostic data.
+- Interop test harnesses for native libraries and COM objects when building Windows integrations.
+- Security research and red-team/blue-team lab work, conducted in controlled environments with explicit permission.
 
 ## Function List
 
