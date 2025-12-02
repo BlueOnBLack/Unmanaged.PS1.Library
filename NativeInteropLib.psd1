@@ -1,6 +1,6 @@
 @{
     # Module version and metadata
-    ModuleVersion = '1.0.0'
+    ModuleVersion = '2.0.0'
     Author        = 'Dark Vador'
     Description   = 'A module for managing native DLL interop and related functions'
 
@@ -12,7 +12,7 @@
 
     # Variables to export (optional)
     VariablesToExport = '*'
-
+	
     # Cmdlets to export (if any)
     CmdletsToExport = '*'
 }

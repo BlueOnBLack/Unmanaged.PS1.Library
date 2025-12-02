@@ -21,12 +21,321 @@ using namespace System.Text.RegularExpressions
 using namespace System.Threading
 using namespace System.Windows.Forms
 
-$ProgressPreference = 'SilentlyContinue'
-
-Import-Module NtObjectManager -ErrorAction SilentlyContinue
-if (!([PSTypeName]'NtCoreLib.NtToken').Type) {
-    Write-warning 'NtObjectManager types cant be found!'
+Add-Type -TypeDefinition @'
+public enum LdrFlagsMap : int {
+    PackagedBinary          = 0x00000001,
+    MarkedForRemoval        = 0x00000002,
+    ImageDll                = 0x00000004,
+    LoadNotificationsSent   = 0x00000008,
+    TelemetryEntryProcessed = 0x00000010,
+    ProcessStaticImport     = 0x00000020,
+    InLegacyLists           = 0x00000040,
+    InIndexes               = 0x00000080,
+    ShimDll                 = 0x00000100,
+    InExceptionTable        = 0x00000200,
+    LoadInProgress          = 0x00001000,
+    LoadConfigProcessed     = 0x00002000,
+    EntryProcessed          = 0x00004000,
+    ProtectDelayLoad        = 0x00008000,
+    DontCallForThreads      = 0x00040000,
+    ProcessAttachCalled     = 0x00080000,
+    ProcessAttachFailed     = 0x00100000,
+    CorDeferredValidate     = 0x00200000,
+    CorImage                = 0x00400000,
+    DontRelocate            = 0x00800000,
+    CorILOnly               = 0x01000000,
+    ChpeImage               = 0x02000000,
+    Redirected              = 0x10000000
+    // CompatDatabaseProcessed = 0x80000000
 }
+
+public enum LdrLoadReasonMap : int {
+    StaticDependency              = 0,
+    StaticForwarderDependency     = 1,
+    DynamicForwarderDependency    = 2,
+    DelayloadDependency           = 3,
+    DynamicLoad                   = 4,
+    AsImageLoad                   = 5,
+    AsDataLoad                    = 6,
+    EnclavePrimary                = 7,
+    EnclaveDependency             = 8,
+    Unknown                       = -1
+}
+
+public enum LOAD_LIBRARY : uint{
+    NO_DLL_REF           = 0x00000001,
+    IGNORE_AUTHZ         = 0x00000010,
+    AS_DATAFILE          = 0x00000002,
+    AS_DATAFILE_EXCL     = 0x00000040,
+    AS_IMAGE_RES         = 0x00000020,
+    SEARCH_APP           = 0x00000200,
+    SEARCH_DEFAULT       = 0x00001000,
+    SEARCH_DLL_LOAD      = 0x00000100,
+    SEARCH_SYS32         = 0x00000800,
+    SEARCH_USER          = 0x00000400,
+    ALTERED_SEARCH       = 0x00000008,
+    REQ_SIGNED           = 0x00000080,
+    SAFE_CURRENT         = 0x00002000
+}
+
+public enum LSA_AccessFlags : long {
+    VIEW_LOCAL_INFORMATION      = 0x00000001L,
+    VIEW_AUDIT_INFORMATION      = 0x00000002L,
+    GET_PRIVATE_INFORMATION     = 0x00000004L,
+    TRUST_ADMIN                 = 0x00000008L,
+    CREATE_ACCOUNT              = 0x00000010L,
+    CREATE_SECRET               = 0x00000020L,
+    CREATE_PRIVILEGE            = 0x00000040L,
+    SET_DEFAULT_QUOTA_LIMITS    = 0x00000080L,
+    SET_AUDIT_REQUIREMENTS      = 0x00000100L,
+    AUDIT_LOG_ADMIN             = 0x00000200L,
+    SERVER_ADMIN                = 0x00000400L,
+    LOOKUP_NAMES                = 0x00000800L,
+    NOTIFICATION                = 0x00001000L
+}
+
+public enum ErrorMessageType : uint {
+    ALL         = 1,
+    WIN32       = 2,
+    NTSTATUS    = 4,
+    ACTIVATION  = 8,
+    NETWORK     = 16,
+    CBS         = 32,
+    BITS        = 64,
+    HTTP        = 128,
+    UPDATE      = 256,
+    HRESULT     = 512,
+    WMI         = 1024,
+    OLE         = 2048
+}
+
+public enum VistaMode : uint {
+    Auto   = 0,
+    DotNet = 1,
+    PS1    = 2,
+    Api    = 3
+}
+
+public enum TOKEN_ACCESS : uint {
+    STANDARD          = 0x000F0000,
+    ASSIGN_PRIMARY    = 0x0001,
+    DUPLICATE         = 0x0002,
+    IMPERSONATE       = 0x0004,
+    QUERY             = 0x0008,
+    QUERY_SOURCE      = 0x0010,
+    ADJUST_PRIVILEGES = 0x0020,
+    ADJUST_GROUPS     = 0x0040,
+    ADJUST_DEFAULT    = 0x0080,
+    ADJUST_SESSIONID  = 0x0100
+}
+
+public enum SERVICE_STATUS : uint {
+    STOPPED           = 0x00000001,
+    START_PENDING     = 0x00000002,
+    STOP_PENDING      = 0x00000003,
+    RUNNING           = 0x00000004,
+    CONTINUE_PENDING  = 0x00000005,
+    PAUSE_PENDING     = 0x00000006,
+    PAUSED            = 0x00000007
+}
+
+public enum AuthenticationMode : uint {
+    Token  = 0,
+    Logon  = 1,
+    User   = 2,
+    Hybrid = 3
+}
+public enum NTSTATUS_FACILITY : uint {
+    FACILITY_DEBUGGER             = 0x1,
+    FACILITY_RPC_RUNTIME          = 0x2,
+    FACILITY_RPC_STUBS            = 0x3,
+    FACILITY_IO_ERROR_CODE        = 0x4,
+    FACILITY_CODCLASS_ERROR_CODE  = 0x6,
+    FACILITY_NTWIN32              = 0x7,
+    FACILITY_NTCERT               = 0x8,
+    FACILITY_NTSSPI               = 0x9,
+    FACILITY_TERMINAL_SERVER      = 0xA,
+    FACILITY_MUI_ERROR_CODE       = 0xB,
+    FACILITY_USB_ERROR_CODE       = 0x10,
+    FACILITY_HID_ERROR_CODE       = 0x11,
+    FACILITY_FIREWIRE_ERROR_CODE  = 0x12,
+    FACILITY_CLUSTER_ERROR_CODE   = 0x13,
+    FACILITY_ACPI_ERROR_CODE      = 0x14,
+    FACILITY_SXS_ERROR_CODE       = 0x15,
+    FACILITY_TRANSACTION          = 0x19,
+    FACILITY_COMMONLOG            = 0x1A,
+    FACILITY_VIDEO                = 0x1B,
+    FACILITY_FILTER_MANAGER       = 0x1C,
+    FACILITY_MONITOR              = 0x1D,
+    FACILITY_GRAPHICS_KERNEL      = 0x1E,
+    FACILITY_DRIVER_FRAMEWORK     = 0x20,
+    FACILITY_FVE_ERROR_CODE       = 0x21,
+    FACILITY_FWP_ERROR_CODE       = 0x22,
+    FACILITY_NDIS_ERROR_CODE      = 0x23,
+    FACILITY_TPM                  = 0x29,
+    FACILITY_RTPM                 = 0x2A,
+    FACILITY_HYPERVISOR           = 0x35,
+    FACILITY_IPSEC                = 0x36,
+    FACILITY_VIRTUALIZATION       = 0x37,
+    FACILITY_VOLMGR               = 0x38,
+    FACILITY_BCD_ERROR_CODE       = 0x39,
+    FACILITY_WIN32K_NTUSER        = 0x3E,
+    FACILITY_WIN32K_NTGDI         = 0x3F,
+    FACILITY_RESUME_KEY_FILTER    = 0x40,
+    FACILITY_RDBSS                = 0x41,
+    FACILITY_BTH_ATT              = 0x42,
+    FACILITY_SECUREBOOT           = 0x43,
+    FACILITY_AUDIO_KERNEL         = 0x44,
+    FACILITY_VSM                  = 0x45,
+    FACILITY_VOLSNAP              = 0x50,
+    FACILITY_SDBUS                = 0x51,
+    FACILITY_SHARED_VHDX          = 0x5C,
+    FACILITY_SMB                  = 0x5D,
+    FACILITY_INTERIX              = 0x99,
+    FACILITY_SPACES               = 0xE7,
+    FACILITY_SECURITY_CORE        = 0xE8,
+    FACILITY_SYSTEM_INTEGRITY     = 0xE9,
+    FACILITY_LICENSING            = 0xEA,
+    FACILITY_PLATFORM_MANIFEST    = 0xEB,
+    FACILITY_APP_EXEC             = 0xEC,
+    FACILITY_MAXIMUM_VALUE        = 0xED,
+    FACILITY_UNKNOWN              = 0xFFFF,
+    FACILITY_NT_BIT               = 0x10000000
+}
+public enum HRESULT_Facility : uint {
+    FACILITY_NULL = 0x0,
+    FACILITY_RPC = 0x1,
+    FACILITY_DISPATCH = 0x2,
+    FACILITY_STORAGE = 0x3,
+    FACILITY_ITF = 0x4,
+    FACILITY_WIN32 = 0x7,
+    FACILITY_WINDOWS = 0x8,
+    FACILITY_SECURITY = 0x9,
+    FACILITY_SSPI = 0x9,
+    FACILITY_CONTROL = 0xA,
+    FACILITY_CERT = 0xB,
+    FACILITY_INTERNET = 0xC,
+    FACILITY_MEDIASERVER = 0xD,
+    FACILITY_MSMQ = 0xE,
+    FACILITY_SETUPAPI = 0xF,
+    FACILITY_SCARD = 0x10,
+    FACILITY_COMPLUS = 0x11,
+    FACILITY_AAF = 0x12,
+    FACILITY_URT = 0x13,
+    FACILITY_ACS = 0x14,
+    FACILITY_DPLAY = 0x15,
+    FACILITY_UMI = 0x16,
+    FACILITY_SXS = 0x17,
+    FACILITY_WINDOWS_CE = 0x18,
+    FACILITY_HTTP = 0x19,
+    FACILITY_USERMODE_COMMONLOG = 0x1A,
+    FACILITY_WER = 0x1B,
+    FACILITY_USERMODE_FILTER_MANAGER = 0x1F,
+    FACILITY_BACKGROUNDCOPY = 0x20,
+    FACILITY_CONFIGURATION = 0x21,
+    FACILITY_WIA = 0x21,
+    FACILITY_STATE_MANAGEMENT = 0x22,
+    FACILITY_METADIRECTORY = 0x23,
+    FACILITY_WINDOWSUPDATE = 0x24,
+    FACILITY_DIRECTORYSERVICE = 0x25,
+    FACILITY_GRAPHICS = 0x26,
+    FACILITY_NAP = 0x27,
+    FACILITY_SHELL = 0x27,
+    FACILITY_TPM_SERVICES = 0x28,
+    FACILITY_TPM_SOFTWARE = 0x29,
+    FACILITY_UI = 0x2A,
+    FACILITY_XAML = 0x2B,
+    FACILITY_ACTION_QUEUE = 0x2C,
+    FACILITY_PLA = 0x30,
+    FACILITY_WINDOWS_SETUP = 0x30,
+    FACILITY_FVE = 0x31,
+    FACILITY_FWP = 0x32,
+    FACILITY_WINRM = 0x33,
+    FACILITY_NDIS = 0x34,
+    FACILITY_USERMODE_HYPERVISOR = 0x35,
+    FACILITY_CMI = 0x36,
+    FACILITY_USERMODE_VIRTUALIZATION = 0x37,
+    FACILITY_USERMODE_VOLMGR = 0x38,
+    FACILITY_BCD = 0x39,
+    FACILITY_USERMODE_VHD = 0x3A,
+    FACILITY_SDIAG = 0x3C,
+    FACILITY_WEBSERVICES = 0x3D,
+    FACILITY_WINPE = 0x3D,
+    FACILITY_WPN = 0x3E,
+    FACILITY_WINDOWS_STORE = 0x3F,
+    FACILITY_INPUT = 0x40,
+    FACILITY_EAP = 0x42,
+    FACILITY_WINDOWS_DEFENDER = 0x50,
+    FACILITY_OPC = 0x51,
+    FACILITY_XPS = 0x52,
+    FACILITY_RAS = 0x53,
+    FACILITY_MBN = 0x54,
+    FACILITY_POWERSHELL = 0x54,
+    FACILITY_EAS = 0x55,
+    FACILITY_P2P_INT = 0x62,
+    FACILITY_P2P = 0x63,
+    FACILITY_DAF = 0x64,
+    FACILITY_BLUETOOTH_ATT = 0x65,
+    FACILITY_AUDIO = 0x66,
+    FACILITY_VISUALCPP = 0x6D,
+    FACILITY_SCRIPT = 0x70,
+    FACILITY_PARSE = 0x71,
+    FACILITY_BLB = 0x78,
+    FACILITY_BLB_CLI = 0x79,
+    FACILITY_WSBAPP = 0x7A,
+    FACILITY_BLBUI = 0x80,
+    FACILITY_USN = 0x81,
+    FACILITY_USERMODE_VOLSNAP = 0x82,
+    FACILITY_TIERING = 0x83,
+    FACILITY_WSB_ONLINE = 0x85,
+    FACILITY_ONLINE_ID = 0x86,
+    FACILITY_DLS = 0x99,
+    FACILITY_SOS = 0xA0,
+    FACILITY_DEBUGGERS = 0xB0,
+    FACILITY_USERMODE_SPACES = 0xE7,
+    FACILITY_DMSERVER = 0x100,
+    FACILITY_RESTORE = 0x100,
+    FACILITY_SPP = 0x100,
+    FACILITY_DEPLOYMENT_SERVICES_SERVER = 0x101,
+    FACILITY_DEPLOYMENT_SERVICES_IMAGING = 0x102,
+    FACILITY_DEPLOYMENT_SERVICES_MANAGEMENT = 0x103,
+    FACILITY_DEPLOYMENT_SERVICES_UTIL = 0x104,
+    FACILITY_DEPLOYMENT_SERVICES_BINLSVC = 0x105,
+    FACILITY_DEPLOYMENT_SERVICES_PXE = 0x107,
+    FACILITY_DEPLOYMENT_SERVICES_TFTP = 0x108,
+    FACILITY_DEPLOYMENT_SERVICES_TRANSPORT_MANAGEMENT = 0x110,
+    FACILITY_DEPLOYMENT_SERVICES_DRIVER_PROVISIONING = 0x116,
+    FACILITY_DEPLOYMENT_SERVICES_MULTICAST_SERVER = 0x121,
+    FACILITY_DEPLOYMENT_SERVICES_MULTICAST_CLIENT = 0x122,
+    FACILITY_DEPLOYMENT_SERVICES_CONTENT_PROVIDER = 0x125,
+    FACILITY_LINGUISTIC_SERVICES = 0x131,
+    FACILITY_WEB = 0x375,
+    FACILITY_WEB_SOCKET = 0x376,
+    FACILITY_AUDIOSTREAMING = 0x446,
+    FACILITY_ACCELERATOR = 0x600,
+    FACILITY_MOBILE = 0x701,
+    FACILITY_WMAAECMA = 0x7CC,
+    FACILITY_WEP = 0x801,
+    FACILITY_SYNCENGINE = 0x802,
+    FACILITY_DIRECTMUSIC = 0x878,
+    FACILITY_DIRECT3D10 = 0x879,
+    FACILITY_DXGI = 0x87A,
+    FACILITY_DXGI_DDI = 0x87B,
+    FACILITY_DIRECT3D11 = 0x87C,
+    FACILITY_LEAP = 0x888,
+    FACILITY_AUDCLNT = 0x889,
+    FACILITY_WINCODEC_DWRITE_DWM = 0x898,
+    FACILITY_DIRECT2D = 0x899,
+    FACILITY_DEFRAG = 0x900,
+    FACILITY_USERMODE_SDBUS = 0x901,
+    FACILITY_JSCRIPT = 0x902,
+    FACILITY_PIDGENX = 0xA01,
+    FACILITY_UNKNOWN = 0xFFF
+}
+'@
+
+$ProgressPreference = 'SilentlyContinue'
+Import-Module NtObjectManager -ErrorAction SilentlyContinue
 
 #region "MESSAGE"
 <#
@@ -1280,20 +1589,6 @@ Write-Host "Testing *** BOR CASE" -ForegroundColor Green
 Write-Host "WIN32 -bor HRESULT -bor NTSTATUS" -ForegroundColor Green
 Parse-ErrorMessage -log -MessageId 0x00030206 -Flags ([ErrorMessageType]::WIN32 -bor [ErrorMessageType]::NTSTATUS -bor [ErrorMessageType]::HRESULT)
 #>
-Enum ErrorMessageType {
-    ALL         = 0
-    WIN32       = 1
-    NTSTATUS    = 2
-    ACTIVATION  = 4
-    NETWORK     = 8
-    CBS         = 16
-    BITS        = 32
-    HTTP        = 64
-    UPDATE      = 128
-    HRESULT     = 256
-    WMI         = 512
-    OLE         = 1024
-}
 function Parse-MessageId {
     param (
         [string] $MessageId
@@ -1685,193 +1980,6 @@ Parse-ErrorFacility -Log $true -HResult 0x00242015
 Write-Warning "Check CBS -> 2148469005 "
 Parse-ErrorFacility -Log $true -HResult 2148469005
 #>
-enum HRESULT_Facility {
-    FACILITY_NULL                             = 0x0         # General (no specific source)
-    FACILITY_RPC                              = 0x1         # Remote Procedure Call
-    FACILITY_DISPATCH                         = 0x2         # COM Dispatch
-    FACILITY_STORAGE                          = 0x3         # Storage
-    FACILITY_ITF                              = 0x4         # Interface-specific
-    FACILITY_WIN32                            = 0x7         # Standard Win32 errors
-    FACILITY_WINDOWS                          = 0x8         # Windows system component
-    FACILITY_SECURITY                         = 0x9         # Security subsystem
-    FACILITY_SSPI                             = 0x9         # Security Support Provider Interface
-    FACILITY_CONTROL                          = 0xA         # Control
-    FACILITY_CERT                             = 0xB         # Certificate services
-    FACILITY_INTERNET                         = 0xC         # Internet-related
-    FACILITY_MEDIASERVER                      = 0xD         # Media server
-    FACILITY_MSMQ                             = 0xE         # Microsoft Message Queue
-    FACILITY_SETUPAPI                         = 0xF         # Setup API
-    FACILITY_SCARD                            = 0x10        # Smart card subsystem
-    FACILITY_COMPLUS                          = 0x11        # COM+ services
-    FACILITY_AAF                              = 0x12        # Advanced Authoring Format
-    FACILITY_URT                              = 0x13        # .NET runtime
-    FACILITY_ACS                              = 0x14        # Access Control Services
-    FACILITY_DPLAY                            = 0x15        # DirectPlay
-    FACILITY_UMI                              = 0x16        # UMI (Universal Management Infrastructure)
-    FACILITY_SXS                              = 0x17        # Side-by-Side (Assembly)
-    FACILITY_WINDOWS_CE                       = 0x18        # Windows CE
-    FACILITY_HTTP                             = 0x19        # HTTP services
-    FACILITY_USERMODE_COMMONLOG               = 0x1A        # Common Logging
-    FACILITY_WER                              = 0x1B        # Windows Error Reporting
-    FACILITY_USERMODE_FILTER_MANAGER          = 0x1F        # File system filter manager
-    FACILITY_BACKGROUNDCOPY                   = 0x20        # Background Intelligent Transfer Service (BITS)
-    FACILITY_CONFIGURATION                    = 0x21        # Configuration
-    FACILITY_WIA                              = 0x21        # Windows Image Acquisition
-    FACILITY_STATE_MANAGEMENT                 = 0x22        # State management services
-    FACILITY_METADIRECTORY                    = 0x23        # Meta-directory services
-    FACILITY_WINDOWSUPDATE                    = 0x24        # Windows Update
-    FACILITY_DIRECTORYSERVICE                 = 0x25        # Directory services (e.g., Active Directory)
-    FACILITY_GRAPHICS                         = 0x26        # Graphics subsystem
-    FACILITY_NAP                              = 0x27        # Network Access Protection
-    FACILITY_SHELL                            = 0x27        # Windows Shell
-    FACILITY_TPM_SERVICES                     = 0x28        # Trusted Platform Module services
-    FACILITY_TPM_SOFTWARE                     = 0x29        # TPM software stack
-    FACILITY_UI                               = 0x2A        # User Interface
-    FACILITY_XAML                             = 0x2B        # XAML parser
-    FACILITY_ACTION_QUEUE                     = 0x2C        # Action queue
-    FACILITY_PLA                              = 0x30        # Performance Logs and Alerts
-    FACILITY_WINDOWS_SETUP                    = 0x30        # Windows Setup
-    FACILITY_FVE                              = 0x31        # Full Volume Encryption (BitLocker)
-    FACILITY_FWP                              = 0x32        # Windows Filtering Platform
-    FACILITY_WINRM                            = 0x33        # Windows Remote Management
-    FACILITY_NDIS                             = 0x34        # Network Driver Interface Specification
-    FACILITY_USERMODE_HYPERVISOR              = 0x35        # User-mode Hypervisor
-    FACILITY_CMI                              = 0x36        # Configuration Management Infrastructure
-    FACILITY_USERMODE_VIRTUALIZATION          = 0x37        # User-mode virtualization
-    FACILITY_USERMODE_VOLMGR                  = 0x38        # Volume Manager
-    FACILITY_BCD                              = 0x39        # Boot Configuration Data
-    FACILITY_USERMODE_VHD                     = 0x3A        # Virtual Hard Disk
-    FACILITY_SDIAG                            = 0x3C        # System Diagnostics
-    FACILITY_WEBSERVICES                      = 0x3D        # Web Services
-    FACILITY_WINPE                            = 0x3D        # Windows Preinstallation Environment
-    FACILITY_WPN                              = 0x3E        # Windows Push Notification
-    FACILITY_WINDOWS_STORE                    = 0x3F        # Windows Store
-    FACILITY_INPUT                            = 0x40        # Input subsystem
-    FACILITY_EAP                              = 0x42        # Extensible Authentication Protocol
-    FACILITY_WINDOWS_DEFENDER                 = 0x50        # Windows Defender
-    FACILITY_OPC                              = 0x51        # OPC (Open Packaging Conventions)
-    FACILITY_XPS                              = 0x52        # XML Paper Specification
-    FACILITY_RAS                              = 0x53        # Remote Access Service
-    FACILITY_MBN                              = 0x54        # Mobile Broadband
-    FACILITY_POWERSHELL                       = 0x54        # PowerShell
-    FACILITY_EAS                              = 0x55        # Exchange ActiveSync
-    FACILITY_P2P_INT                          = 0x62        # Peer-to-Peer internal
-    FACILITY_P2P                              = 0x63        # Peer-to-Peer
-    FACILITY_DAF                              = 0x64        # Device Association Framework
-    FACILITY_BLUETOOTH_ATT                    = 0x65        # Bluetooth Attribute Protocol
-    FACILITY_AUDIO                            = 0x66        # Audio subsystem
-    FACILITY_VISUALCPP                        = 0x6D        # Visual C++ runtime
-    FACILITY_SCRIPT                           = 0x70        # Scripting engine
-    FACILITY_PARSE                            = 0x71        # Parsing engine
-    FACILITY_BLB                              = 0x78        # Backup/Restore infrastructure
-    FACILITY_BLB_CLI                          = 0x79        # Backup/Restore client
-    FACILITY_WSBAPP                           = 0x7A        # Windows Server Backup Application
-    FACILITY_BLBUI                            = 0x80        # Backup UI
-    FACILITY_USN                              = 0x81        # Update Sequence Number Journal
-    FACILITY_USERMODE_VOLSNAP                 = 0x82        # Volume Snapshot Service
-    FACILITY_TIERING                          = 0x83        # Storage Tiering
-    FACILITY_WSB_ONLINE                       = 0x85        # Windows Server Backup Online
-    FACILITY_ONLINE_ID                        = 0x86        # Windows Live ID
-    FACILITY_DLS                              = 0x99        # Downloadable Sound (DLS)
-    FACILITY_SOS                              = 0xA0        # SOS debugging
-    FACILITY_DEBUGGERS                        = 0xB0        # Debuggers
-    FACILITY_USERMODE_SPACES                  = 0xE7        # Storage Spaces (user-mode)
-    FACILITY_DMSERVER                         = 0x100       # Digital Media Server
-    FACILITY_RESTORE                          = 0x100       # System Restore
-    FACILITY_SPP                              = 0x100       # Software Protection Platform
-    FACILITY_DEPLOYMENT_SERVICES_SERVER       = 0x101       # Windows Deployment Server
-    FACILITY_DEPLOYMENT_SERVICES_IMAGING      = 0x102       # Imaging services
-    FACILITY_DEPLOYMENT_SERVICES_MANAGEMENT   = 0x103       # Deployment management
-    FACILITY_DEPLOYMENT_SERVICES_UTIL         = 0x104       # Deployment utilities
-    FACILITY_DEPLOYMENT_SERVICES_BINLSVC      = 0x105       # BINL service
-    FACILITY_DEPLOYMENT_SERVICES_PXE          = 0x107       # PXE boot service
-    FACILITY_DEPLOYMENT_SERVICES_TFTP         = 0x108       # Trivial File Transfer Protocol
-    FACILITY_DEPLOYMENT_SERVICES_TRANSPORT_MANAGEMENT = 0x110 # Transport management
-    FACILITY_DEPLOYMENT_SERVICES_DRIVER_PROVISIONING = 0x116 # Driver provisioning
-    FACILITY_DEPLOYMENT_SERVICES_MULTICAST_SERVER = 0x121     # Multicast server
-    FACILITY_DEPLOYMENT_SERVICES_MULTICAST_CLIENT = 0x122     # Multicast client
-    FACILITY_DEPLOYMENT_SERVICES_CONTENT_PROVIDER = 0x125     # Content provider
-    FACILITY_LINGUISTIC_SERVICES              = 0x131       # Linguistic analysis services
-    FACILITY_WEB                              = 0x375       # Web Platform
-    FACILITY_WEB_SOCKET                       = 0x376       # WebSockets
-    FACILITY_AUDIOSTREAMING                   = 0x446       # Audio streaming
-    FACILITY_ACCELERATOR                      = 0x600       # Hardware acceleration
-    FACILITY_MOBILE                           = 0x701       # Windows Mobile
-    FACILITY_WMAAECMA                         = 0x7CC       # Audio echo cancellation
-    FACILITY_WEP                              = 0x801       # Windows Enforcement Platform
-    FACILITY_SYNCENGINE                       = 0x802       # Sync engine
-    FACILITY_DIRECTMUSIC                      = 0x878       # DirectMusic
-    FACILITY_DIRECT3D10                       = 0x879       # Direct3D 10
-    FACILITY_DXGI                             = 0x87A       # DirectX Graphics Infrastructure
-    FACILITY_DXGI_DDI                         = 0x87B       # DXGI Device Driver Interface
-    FACILITY_DIRECT3D11                       = 0x87C       # Direct3D 11
-    FACILITY_LEAP                             = 0x888       # Leap Motion (or similar input)
-    FACILITY_AUDCLNT                          = 0x889       # Audio client
-    FACILITY_WINCODEC_DWRITE_DWM              = 0x898       # Imaging, DirectWrite, DWM
-    FACILITY_DIRECT2D                         = 0x899       # Direct2D graphics
-    FACILITY_DEFRAG                           = 0x900       # Defragmentation
-    FACILITY_USERMODE_SDBUS                   = 0x901       # Secure Digital bus (user-mode)
-    FACILITY_JSCRIPT                          = 0x902       # JScript engine
-    FACILITY_PIDGENX                          = 0xA01       # Product ID Generator (extended)
-    FACILITY_UNKNOWN                          = 0xFFF       # Unknown facility
-}
-enum NTSTATUS_FACILITY {
-    FACILITY_DEBUGGER             = 0x1
-    FACILITY_RPC_RUNTIME          = 0x2
-    FACILITY_RPC_STUBS            = 0x3
-    FACILITY_IO_ERROR_CODE        = 0x4
-    FACILITY_CODCLASS_ERROR_CODE  = 0x6
-    FACILITY_NTWIN32              = 0x7
-    FACILITY_NTCERT               = 0x8
-    FACILITY_NTSSPI               = 0x9
-    FACILITY_TERMINAL_SERVER      = 0xA
-    FACILITY_MUI_ERROR_CODE       = 0xB
-    FACILITY_USB_ERROR_CODE       = 0x10
-    FACILITY_HID_ERROR_CODE       = 0x11
-    FACILITY_FIREWIRE_ERROR_CODE  = 0x12
-    FACILITY_CLUSTER_ERROR_CODE   = 0x13
-    FACILITY_ACPI_ERROR_CODE      = 0x14
-    FACILITY_SXS_ERROR_CODE       = 0x15
-    FACILITY_TRANSACTION          = 0x19
-    FACILITY_COMMONLOG            = 0x1A
-    FACILITY_VIDEO                = 0x1B
-    FACILITY_FILTER_MANAGER       = 0x1C
-    FACILITY_MONITOR              = 0x1D
-    FACILITY_GRAPHICS_KERNEL      = 0x1E
-    FACILITY_DRIVER_FRAMEWORK     = 0x20
-    FACILITY_FVE_ERROR_CODE       = 0x21
-    FACILITY_FWP_ERROR_CODE       = 0x22
-    FACILITY_NDIS_ERROR_CODE      = 0x23
-    FACILITY_TPM                  = 0x29
-    FACILITY_RTPM                 = 0x2A
-    FACILITY_HYPERVISOR           = 0x35
-    FACILITY_IPSEC                = 0x36
-    FACILITY_VIRTUALIZATION       = 0x37
-    FACILITY_VOLMGR               = 0x38
-    FACILITY_BCD_ERROR_CODE       = 0x39
-    FACILITY_WIN32K_NTUSER        = 0x3E
-    FACILITY_WIN32K_NTGDI         = 0x3F
-    FACILITY_RESUME_KEY_FILTER    = 0x40
-    FACILITY_RDBSS                = 0x41
-    FACILITY_BTH_ATT              = 0x42
-    FACILITY_SECUREBOOT           = 0x43
-    FACILITY_AUDIO_KERNEL         = 0x44
-    FACILITY_VSM                  = 0x45
-    FACILITY_VOLSNAP              = 0x50
-    FACILITY_SDBUS                = 0x51
-    FACILITY_SHARED_VHDX          = 0x5C
-    FACILITY_SMB                  = 0x5D
-    FACILITY_INTERIX              = 0x99
-    FACILITY_SPACES               = 0xE7
-    FACILITY_SECURITY_CORE        = 0xE8
-    FACILITY_SYSTEM_INTEGRITY     = 0xE9
-    FACILITY_LICENSING            = 0xEA
-    FACILITY_PLATFORM_MANIFEST    = 0xEB
-    FACILITY_APP_EXEC             = 0xEC
-    FACILITY_MAXIMUM_VALUE        = 0xED
-    FACILITY_UNKNOWN              = 0xFFFF
-    FACILITY_NT_BIT               = 0x10000000
-}
 function Parse-ErrorFacility {
     [CmdletBinding()]
     param (
@@ -7637,21 +7745,6 @@ Function Adjust-TokenPrivileges {
         [Switch] $Log
     )
 
-    enum LSA_AccessFlags {
-        VIEW_LOCAL_INFORMATION      = 0x00000001L
-        VIEW_AUDIT_INFORMATION      = 0x00000002L
-        GET_PRIVATE_INFORMATION     = 0x00000004L
-        TRUST_ADMIN                 = 0x00000008L
-        CREATE_ACCOUNT              = 0x00000010L
-        CREATE_SECRET               = 0x00000020L
-        CREATE_PRIVILEGE            = 0x00000040L
-        SET_DEFAULT_QUOTA_LIMITS    = 0x00000080L
-        SET_AUDIT_REQUIREMENTS      = 0x00000100L
-        AUDIT_LOG_ADMIN             = 0x00000200L
-        SERVER_ADMIN                = 0x00000400L
-        LOOKUP_NAMES                = 0x00000800L
-        NOTIFICATION                = 0x00001000L
-    }
     function Get-PrivilegeLuid {
         param (
             [ValidateNotNullOrEmpty()]
@@ -9204,21 +9297,6 @@ Function NtCurrentTeb {
     According to dwFlag value,
     who provide by user.
 #>
-enum LOAD_LIBRARY {
-    NO_DLL_REF = 0x00000001
-    IGNORE_AUTHZ = 0x00000010
-    AS_DATAFILE = 0x00000002
-    AS_DATAFILE_EXCL = 0x00000040
-    AS_IMAGE_RES = 0x00000020
-    SEARCH_APP = 0x00000200
-    SEARCH_DEFAULT = 0x00001000
-    SEARCH_DLL_LOAD = 0x00000100
-    SEARCH_SYS32 = 0x00000800
-    SEARCH_USER = 0x00000400
-    ALTERED_SEARCH = 0x00000008
-    REQ_SIGNED = 0x00000080
-    SAFE_CURRENT = 0x00002000
-}
 function Ldr-LoadDll {
     param (
         [Parameter(Mandatory = $true)]
@@ -9637,46 +9715,6 @@ function Get-LoadedModules {
 
         # Start parse Data
 
-        enum LdrFlagsMap {
-            PackagedBinary         = 0x00000001
-            MarkedForRemoval       = 0x00000002
-            ImageDll               = 0x00000004
-            LoadNotificationsSent  = 0x00000008
-            TelemetryEntryProcessed= 0x00000010
-            ProcessStaticImport    = 0x00000020
-            InLegacyLists          = 0x00000040
-            InIndexes              = 0x00000080
-            ShimDll                = 0x00000100
-            InExceptionTable       = 0x00000200
-            LoadInProgress         = 0x00001000
-            LoadConfigProcessed    = 0x00002000
-            EntryProcessed         = 0x00004000
-            ProtectDelayLoad       = 0x00008000
-            DontCallForThreads     = 0x00040000
-            ProcessAttachCalled    = 0x00080000
-            ProcessAttachFailed    = 0x00100000
-            CorDeferredValidate    = 0x00200000
-            CorImage               = 0x00400000
-            DontRelocate           = 0x00800000
-            CorILOnly              = 0x01000000
-            ChpeImage              = 0x02000000
-            Redirected             = 0x10000000
-            CompatDatabaseProcessed= 0x80000000
-        }
-
-        enum LdrLoadReasonMap {
-            StaticDependency = 0
-            StaticForwarderDependency = 1
-            DynamicForwarderDependency = 2
-            DelayloadDependency = 3
-            DynamicLoad = 4
-            AsImageLoad = 5
-            AsDataLoad = 6
-            EnclavePrimary = 7
-            EnclaveDependency = 8
-            Unknown = -1
-        }
-
         do {
 
             $flagsValue = Read-MemoryValue -LinkPtr $NextLinkPtr -Offset $PebOffsetMap['Flags'] -Type UInt32
@@ -9950,39 +9988,6 @@ public class TokenHelper {
 }
 '@
 Add-Type $tokenHelperCode -Language CSharp -ErrorAction Stop
-}
-enum VistaMode {
-    Auto   = 0
-    DotNet = 1
-    PS1    = 2
-    Api    = 3
-}
-enum TOKEN_ACCESS {
-    STANDARD          = 0x000F0000
-    ASSIGN_PRIMARY    = 0x0001
-    DUPLICATE         = 0x0002
-    IMPERSONATE       = 0x0004
-    QUERY             = 0x0008
-    QUERY_SOURCE      = 0x0010
-    ADJUST_PRIVILEGES = 0x0020
-    ADJUST_GROUPS     = 0x0040
-    ADJUST_DEFAULT    = 0x0080
-    ADJUST_SESSIONID  = 0x0100
-}
-enum SERVICE_STATUS {
-    STOPPED = 0x00000001
-    START_PENDING = 0x00000002
-    STOP_PENDING = 0x00000003
-    RUNNING = 0x00000004
-    CONTINUE_PENDING = 0x00000005
-    PAUSE_PENDING = 0x00000006
-    PAUSED = 0x00000007
-}
-enum AuthenticationMode {
-    Token  = 0
-    Logon  = 1
-    User   = 2
-    Hybrid = 3
 }
 function Query-Process {
     param (
