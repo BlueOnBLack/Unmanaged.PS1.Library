@@ -1670,6 +1670,10 @@ function Parse-MessageId {
                     $wrappedVal = $longVal + 0x100000000L
                     if ($wrappedVal -ge 0 -and $wrappedVal -le [uint32]::MaxValue) {
                         $unsignedVal = [uint32]$wrappedVal
+                        $isWin32Err = ($unsignedVal -band 0x80000000) -ne 0 -and (($unsignedVal -shr 16) -band 0x0FFF) -eq 7
+                        if ($isWin32Err) {
+                            return ($unsignedVal -band 0x0000FFFF)
+                        }
                         return $unsignedVal
                     } else {
                         return $null
