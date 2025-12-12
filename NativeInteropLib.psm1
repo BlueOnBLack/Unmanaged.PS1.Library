@@ -3437,6 +3437,35 @@ Function Init-PIDGENX {
     )
     #>
 
+    # pidgenx, GetPKeyData, reversed by WitherOrNot
+    # https://github.com/WitherOrNot/chacha/blob/main/chacha.cmd
+    # https://forums.mydigitallife.net/threads/enable-active-directory-based-activation.89790/
+    
+    <#
+    $PKey       = $Pid4.DigitalKey
+    $extPid     = $Pid4.AdvancedPID
+    $ActId      = $Pid4.ActivationID
+    $PKeyConfig = "C:\windows\System32\spp\tokens\pkeyconfig\pkeyconfig.xrm-ms"
+
+    $HWID       = 0L
+    $MPC        = [IntPtr]::Zero
+    $IID        = ""
+    $Edition    = ""
+    $Channel    = ""
+    $Partnum    = ""
+    $ret = Invoke-UnmanagedMethod `
+        -Dll pidgenx.dll `
+        -Function GetPKeyData `
+        -Return int32 `
+        -Params "String pKey, String Config, IntPtr MPC, IntPtr null1, Int64 HWID, Out string IID, Out string Edition, Out string Channel, Out string Partnum, IntPtr null2" `
+        -CharSet Unicode `
+        -Values @(
+            $PKey, $PKeyConfig, $Mpc, [IntPtr]::Zero, $HWID,
+            [ref]$IID, [ref]$Edition, [ref]$Channel, [ref]$Partnum,
+            [IntPtr]::Zero
+        )
+    #>
+
     $functions = @(
         @{
             Name       = "PidGenX"
@@ -3449,6 +3478,12 @@ Function Init-PIDGENX {
             Dll        = "pidgenx.dll"
             ReturnType = [int]
             Parameters = [Type[]]@([string], [string], [string], [int], [int], [IntPtr], [IntPtr], [IntPtr])
+        },
+        @{
+            Name       = "GetPKeyData"
+            Dll        = "pidgenx.dll"
+            ReturnType = [int]
+            Parameters = [Type[]]@([String], [String], [IntPtr], [IntPtr], [Int64], [string].MakeByRefType(), [string].MakeByRefType(), [string].MakeByRefType(), [string].MakeByRefType(), [IntPtr])
         }
     )
     return Register-NativeMethods $functions -ImplAttributes ([MethodImplAttributes]::IL)
