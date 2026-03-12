@@ -3075,6 +3075,23 @@ Function Init-SLC {
                 Parameters = @(
                     [IntPtr]
             )
+        },
+        @{
+                Name       = 'SLIsWindowsGenuineLocal'
+                Dll        = 'slc.dll'
+                ReturnType = [Int32] # HRESULT
+                Parameters = @(
+                    [Int32].MakeByRefType()
+            )
+        },
+        @{
+                Name       = 'SLpCheckProductKey'
+                Dll        = 'slc.dll'
+                ReturnType = [Int32] # HRESULT
+                Parameters = @(
+                    [IntPtr],
+                    [Int32].MakeByRefType()
+            )
         }
     )
     return Register-NativeMethods $functions
