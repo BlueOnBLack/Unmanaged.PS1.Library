@@ -3092,6 +3092,17 @@ Function Init-SLC {
                     [IntPtr],
                     [Int32].MakeByRefType()
             )
+        },
+        @{
+                Name       = 'SLGetWindowsInformation'
+                Dll        = 'slc.dll'
+                ReturnType = [Int32] # HRESULT
+                Parameters = @(
+                    [string],
+                    [Int32].MakeByRefType(),
+                    [Int32].MakeByRefType(),
+                    [Intptr]
+            )
         }
     )
     return Register-NativeMethods $functions
