@@ -2874,135 +2874,134 @@ Function Init-SLC {
                 [IntPtr].MakeByRefType()        # BYTE** ppbValue (out)
             )
             },
-            @{
-                Name       = 'SLGetSLIDList'
-                Dll        = "sppc.dll"
-                ReturnType = [Int32]  # HRESULT (return type of the function)
-                Parameters = @(
-                    [IntPtr],             # hSLC (HSLC handle)
-                    [Int32],              # eQueryIdType (SLIDTYPE)
-                    [IntPtr],             # null (no query ID passed)
-                    [Int32],              # eReturnIdType (SLIDTYPE)
-                    [int].MakeByRefType(), 
-                    [IntPtr].MakeByRefType()
-                )
-            },
-            @{
-                Name       = 'SLUninstallLicense'
-                Dll        = "sppc.dll"
-                ReturnType = [Int32]  # HRESULT
-                Parameters = @(
-                    [IntPtr],              # hSLC
-                    [Guid].MakeByRefType() # const SLID* pLicenseFileId
-                )
-            },
-            @{
-                Name       = 'SLInstallLicense'
-                Dll        = "sppc.dll"
-                ReturnType = [Int32]  # HRESULT
-                Parameters = @(
-                    [IntPtr],                # HSLC hSLC
-                    [UInt32],                # UINT cbLicenseBlob
-                    [IntPtr],                # const BYTE* pbLicenseBlob
-                    [Guid].MakeByRefType()   # SLID* pLicenseFileId (output GUID)
-                )
-            },
-            @{
-                Name       = 'SLInstallProofOfPurchase'
-                Dll        = "sppc.dll"
-                ReturnType = [Int32]  # HRESULT
-                Parameters = @(
-                    [IntPtr],                         # HSLC hSLC
-                    [string],                         # pwszPKeyAlgorithm (e.g., "msft:rm/algorithm/pkey/2005")
-                    [string],                         # pwszPKeyString (the product key)
-                    [IntPtr],                         # cbPKeySpecificData (size of specific data, could be 0)
-                    [IntPtr],                         # pbPKeySpecificData (optional additional data, can be NULL)
-                    [Guid].MakeByRefType()            # SLID* pPkeyId (output GUID)
-                )
-            },
-            @{
-                Name       = 'SLUninstallProofOfPurchase'
-                Dll        = "sppc.dll"
-                ReturnType = [Int32]  # HRESULT
-                Parameters = @(
-                    [IntPtr],                         # HSLC hSLC
-                    [Guid]                            # pPKeyId (the GUID returned from SLInstallProofOfPurchase)
-                )
-            },
-            @{
-                Name       = 'SLFireEvent'
-                Dll        = "sppc.dll"
-                ReturnType = [Int32]  # HRESULT (return type of the function)
-                Parameters = @(
-                    [IntPtr],              # hSLC
-                    [String],              # pwszEventId (PCWSTR)
-                    [Guid].MakeByRefType() # pApplicationId (SLID*)
-                )
-            },
-            @{
-                Name       = 'SLReArm'
-                Dll        = 'sppc.dll'
-                ReturnType = [Int32] # HRESULT
-                Parameters = @(
-                    [IntPtr],               # hSLC (HSLC handle)
-                    [Guid].MakeByRefType(), # pApplicationId (const SLID* - pointer to GUID)
-                    [Guid].MakeByRefType(), # pProductSkuId (const SLID* - pointer to GUID, optional)
-                    [UInt32]                # dwFlags (DWORD)
-                )
-            },
-            @{
-                Name       = 'SLReArmWindows'
-                Dll        = 'slc.dll'
-                ReturnType = [Int32] # HRESULT
-                Parameters = @()
-            },
-            @{
-                Name       = 'SLActivateProduct'
-                Dll        = 'sppcext.dll'
-                ReturnType = [Int32] # HRESULT
-                Parameters = @(
-                    [IntPtr],           # hSLC (HSLC handle)
-                    [Guid].MakeByRefType(), # pProductSkuId (const SLID* - pointer to GUID)
-                    [UInt32],           # cbAppSpecificData (UINT)
-                    [IntPtr],           # pvAppSpecificData (const PVOID - pointer to arbitrary data, typically IntPtr.Zero if not used)
-                    [IntPtr],           # pActivationInfo (const SL_ACTIVATION_INFO_HEADER* - pointer to structure, typically IntPtr.Zero if not used)
-                    [string],           # pwszProxyServer (PCWSTR - string for proxy server, can be $null)
-                    [UInt16]            # wProxyPort (WORD - unsigned 16-bit integer for proxy port)
-                )
-            },
-            @{
-                # Probably internet activation API
-                Name       = 'SLpIAActivateProduct'
-                Dll        = 'sppc.dll'
-                ReturnType = [uint32] # HRESULT
-                Parameters = @(
-                    [IntPtr],           # hSLC (HSLC handle)
-                    [Guid].MakeByRefType() # pProductSkuId (const SLID* - pointer to GUID)
-                )
-            },
-            @{
-                # Probably Volume activation API
-                Name       = 'SLpVLActivateProduct'
-                Dll        = 'sppc.dll'
-                ReturnType = [uint32] # HRESULT
-                Parameters = @(
-                    [IntPtr],           # hSLC (HSLC handle)
-                    [Guid].MakeByRefType() # pProductSkuId (const SLID* - pointer to GUID)
-                )
-            },
-            @{
-                Name       = 'SLGetLicensingStatusInformation'
-                Dll        = 'sppc.dll'
-                ReturnType = [Int32] # HRESULT
-                Parameters = @(
-                    [IntPtr],                     # hSLC (HSLC handle)
-                    [GUID].MakeByRefType(),       # pAppID (const SLID * - pass [IntPtr]::Zero or allocated GUID)
-                    [IntPtr],                     # pProductSkuId (const SLID * - pass [IntPtr]::Zero or allocated GUID)
-                    [IntPtr],                     # pwszRightName (PCWSTR - pass [IntPtr]::Zero for NULL)
-                    [uint32].MakeByRefType(),     # pnStatusCount (UINT *)
-                    [IntPtr].MakeByRefType()      # ppLicensingStatus (SL_LICENSING_STATUS **)
+        @{
+            Name       = 'SLGetSLIDList'
+            Dll        = "sppc.dll"
+            ReturnType = [Int32]  # HRESULT (return type of the function)
+            Parameters = @(
+                [IntPtr],             # hSLC (HSLC handle)
+                [Int32],              # eQueryIdType (SLIDTYPE)
+                [IntPtr],             # null (no query ID passed)
+                [Int32],              # eReturnIdType (SLIDTYPE)
+                [int].MakeByRefType(), 
+                [IntPtr].MakeByRefType()
             )
         },
+        @{
+            Name       = 'SLUninstallLicense'
+            Dll        = "sppc.dll"
+            ReturnType = [Int32]  # HRESULT
+            Parameters = @(
+                [IntPtr],              # hSLC
+                [Guid].MakeByRefType() # const SLID* pLicenseFileId
+            )
+        },
+        @{
+            Name       = 'SLInstallLicense'
+            Dll        = "sppc.dll"
+            ReturnType = [Int32]  # HRESULT
+            Parameters = @(
+                [IntPtr],                # HSLC hSLC
+                [UInt32],                # UINT cbLicenseBlob
+                [IntPtr],                # const BYTE* pbLicenseBlob
+                [Guid].MakeByRefType()   # SLID* pLicenseFileId (output GUID)
+            )
+        },
+        @{
+            Name       = 'SLInstallProofOfPurchase'
+            Dll        = "sppc.dll"
+            ReturnType = [Int32]  # HRESULT
+            Parameters = @(
+                [IntPtr],                         # HSLC hSLC
+                [string],                         # pwszPKeyAlgorithm (e.g., "msft:rm/algorithm/pkey/2005")
+                [string],                         # pwszPKeyString (the product key)
+                [IntPtr],                         # cbPKeySpecificData (size of specific data, could be 0)
+                [IntPtr],                         # pbPKeySpecificData (optional additional data, can be NULL)
+                [Guid].MakeByRefType()            # SLID* pPkeyId (output GUID)
+            )
+        },
+        @{
+            Name       = 'SLUninstallProofOfPurchase'
+            Dll        = "sppc.dll"
+            ReturnType = [Int32]  # HRESULT
+            Parameters = @(
+                [IntPtr],                         # HSLC hSLC
+                [Guid]                            # pPKeyId (the GUID returned from SLInstallProofOfPurchase)
+            )
+        },
+        @{
+            Name       = 'SLFireEvent'
+            Dll        = "sppc.dll"
+            ReturnType = [Int32]  # HRESULT (return type of the function)
+            Parameters = @(
+                [IntPtr],              # hSLC
+                [String],              # pwszEventId (PCWSTR)
+                [Guid].MakeByRefType() # pApplicationId (SLID*)
+            )
+        },
+        @{
+            Name       = 'SLReArm'
+            Dll        = 'sppc.dll'
+            ReturnType = [Int32] # HRESULT
+            Parameters = @(
+                [IntPtr],               # hSLC (HSLC handle)
+                [Guid].MakeByRefType(), # pApplicationId (const SLID* - pointer to GUID)
+                [Guid].MakeByRefType(), # pProductSkuId (const SLID* - pointer to GUID, optional)
+                [UInt32]                # dwFlags (DWORD)
+            )
+        },
+        @{
+            Name       = 'SLReArmWindows'
+            Dll        = 'slc.dll'
+            ReturnType = [Int32] # HRESULT
+            Parameters = @()
+        },
+        @{
+            Name       = 'SLActivateProduct'
+            Dll        = 'sppcext.dll'
+            ReturnType = [Int32] # HRESULT
+            Parameters = @(
+                [IntPtr],           # hSLC (HSLC handle)
+                [Guid].MakeByRefType(), # pProductSkuId (const SLID* - pointer to GUID)
+                [UInt32],           # cbAppSpecificData (UINT)
+                [IntPtr],           # pvAppSpecificData (const PVOID - pointer to arbitrary data, typically IntPtr.Zero if not used)
+                [IntPtr],           # pActivationInfo (const SL_ACTIVATION_INFO_HEADER* - pointer to structure, typically IntPtr.Zero if not used)
+                [string],           # pwszProxyServer (PCWSTR - string for proxy server, can be $null)
+                [UInt16]            # wProxyPort (WORD - unsigned 16-bit integer for proxy port)
+            )
+        },
+        @{
+            # Probably internet activation API
+            Name       = 'SLpIAActivateProduct'
+            Dll        = 'sppc.dll'
+            ReturnType = [uint32] # HRESULT
+            Parameters = @(
+                [IntPtr],           # hSLC (HSLC handle)
+                [Guid].MakeByRefType() # pProductSkuId (const SLID* - pointer to GUID)
+            )
+        },
+        @{
+            # Probably Volume activation API
+            Name       = 'SLpVLActivateProduct'
+            Dll        = 'sppc.dll'
+            ReturnType = [uint32] # HRESULT
+            Parameters = @(
+                [IntPtr],           # hSLC (HSLC handle)
+                [Guid].MakeByRefType() # pProductSkuId (const SLID* - pointer to GUID)
+            )
+        },
+        @{
+            Name       = 'SLGetLicensingStatusInformation'
+            Dll        = 'sppc.dll'
+            ReturnType = [Int32] # HRESULT
+            Parameters = @(
+                [IntPtr],                     # hSLC (HSLC handle)
+                [GUID].MakeByRefType(),       # pAppID (const SLID * - pass [IntPtr]::Zero or allocated GUID)
+                [IntPtr],                     # pProductSkuId (const SLID * - pass [IntPtr]::Zero or allocated GUID)
+                [IntPtr],                     # pwszRightName (PCWSTR - pass [IntPtr]::Zero for NULL)
+                [uint32].MakeByRefType(),     # pnStatusCount (UINT *)
+                [IntPtr].MakeByRefType()      # ppLicensingStatus (SL_LICENSING_STATUS **)
+        )},
         @{
                 Name       = 'SLConsumeWindowsRight'
                 Dll        = 'slc.dll'
@@ -3102,6 +3101,16 @@ Function Init-SLC {
                     [Int32].MakeByRefType(),
                     [Int32].MakeByRefType(),
                     [Intptr]
+            )
+        },
+        @{
+                Name       = 'SLIsGenuineLocalEx'
+                Dll        = 'sppc.dll'
+                ReturnType = [Int32] # HRESULT
+                Parameters = @(
+                    [Guid].MakeByRefType(),
+                    [IntPtr],
+                    [Int32].MakeByRefType()
             )
         }
     )
