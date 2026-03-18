@@ -8848,12 +8848,12 @@ Function NtCurrentTeb {
         # Buffer   -> use an unmanaged temporary buffer
         # GCHandle -> use a GCHandle pinned buffer
         # Remote   -> using Callback, to receive to TEB pointer
-        [Parameter(Mandatory = $false, Position = 1)]
+        [Parameter(Mandatory = $false, Position = 0)]
         [ValidateSet("Return" ,"Pinned", "Buffer", "GCHandle", "Remote")]
         [string]$Mode = "Return",
 
         # Allocation method for virtual memory
-        [Parameter(Mandatory = $false, Position = 2)]
+        [Parameter(Mandatory = $false, Position = 1)]
         [ValidateSet("Base", "Extend", "Protect")]
         [string]$Method = "Base",
 
@@ -8865,11 +8865,9 @@ Function NtCurrentTeb {
         [switch]$Parameters,
     
         # Enable logging/debug output
-        [Parameter(Mandatory = $false, Position = 7)]
-        [switch]$Log = $false,
+        [switch]$Log,
 
         # Self Check Function
-        [Parameter(Mandatory = $false, Position = 8)]
         [switch]$SelfCheck
     )
 
