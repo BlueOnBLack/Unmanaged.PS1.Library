@@ -8338,60 +8338,6 @@ function Check-AccountType {
        [string]$AccType
     )
 
-$isMember = $false
-
-if (!([PSTypeName]'TOKEN').Type) {
-Add-Type @'
-using System;
-using System.Runtime.InteropServices;
-using System.Security.Principal;
-
-public class TOKEN {
- 
-    [DllImport("kernelbase.dll")]
-    public static extern IntPtr GetCurrentProcessId();
-
-    [DllImport("ntdll.dll")]
-    public static extern void RtlZeroMemory(
-        IntPtr Destination,
-        UIntPtr Length);
-
-    [DllImport("ntdll.dll")]
-    public static extern Int32 NtClose(
-        IntPtr hObject);
-
-
-    [DllImport("ntdll.dll")]
-    public static extern Int32 RtlCheckTokenMembershipEx(
-        IntPtr TokenHandle,
-        IntPtr Sid,
-        Int32 Flags,
-        ref Boolean IsMember);
-
-    [DllImport("ntdll.dll")]
-    public static extern Int32 NtOpenProcess(
-        ref IntPtr ProcessHandle,
-        UInt32 DesiredAccess,
-        IntPtr ObjectAttributes,
-        IntPtr ClientId);
-
-    [DllImport("ntdll.dll")]
-    public static extern Int32 NtOpenProcessToken(
-        IntPtr ProcessHandle,
-        uint DesiredAccess,
-        out IntPtr TokenHandle);
-
-    [DllImport("ntdll.dll")]
-    public static extern Int32 NtQueryInformationToken(
-        IntPtr TokenHandle,
-        int TokenInformationClass,
-        IntPtr TokenInformation,
-        UInt32 TokenInformationLength,
-        out uint ReturnLength );
-}
-'@
-  }
-
 function Check {
     param (
         [Parameter(Mandatory)]
@@ -8558,6 +8504,57 @@ function IsElavated {
         }
         @($hproc, $hToken) | % { [TOKEN]::NtClose($_) | Out-Null }
     }
+}
+if (!([PSTypeName]'TOKEN').Type) {
+Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+using System.Security.Principal;
+
+public class TOKEN {
+ 
+    [DllImport("kernelbase.dll")]
+    public static extern IntPtr GetCurrentProcessId();
+
+    [DllImport("ntdll.dll")]
+    public static extern void RtlZeroMemory(
+        IntPtr Destination,
+        UIntPtr Length);
+
+    [DllImport("ntdll.dll")]
+    public static extern Int32 NtClose(
+        IntPtr hObject);
+
+
+    [DllImport("ntdll.dll")]
+    public static extern Int32 RtlCheckTokenMembershipEx(
+        IntPtr TokenHandle,
+        IntPtr Sid,
+        Int32 Flags,
+        ref Boolean IsMember);
+
+    [DllImport("ntdll.dll")]
+    public static extern Int32 NtOpenProcess(
+        ref IntPtr ProcessHandle,
+        UInt32 DesiredAccess,
+        IntPtr ObjectAttributes,
+        IntPtr ClientId);
+
+    [DllImport("ntdll.dll")]
+    public static extern Int32 NtOpenProcessToken(
+        IntPtr ProcessHandle,
+        uint DesiredAccess,
+        out IntPtr TokenHandle);
+
+    [DllImport("ntdll.dll")]
+    public static extern Int32 NtQueryInformationToken(
+        IntPtr TokenHandle,
+        int TokenInformationClass,
+        IntPtr TokenInformation,
+        UInt32 TokenInformationLength,
+        out uint ReturnLength );
+}
+'@
 }
   
   #SECURITY_NT_AUTHORITY (S-1-5)
