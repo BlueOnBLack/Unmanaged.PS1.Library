@@ -3112,6 +3112,38 @@ Function Init-SLC {
                     [IntPtr],
                     [Int32].MakeByRefType()
             )
+        },
+        @{
+                Name       = 'SLGetPackageProductKey'
+                Dll        = 'sppcext.dll'
+                ReturnType = [Int32] # HRESULT
+                Parameters = @(
+                    [Int32],                  # Licence Blob Size
+                    [IntPtr],                 # Licence Blob Data
+                    [IntPtr].MakeByRefType()  # Return Results, ProductKey? String ?
+            )
+        },
+        @{
+                # Params 1,   HSLC, NdrClientCall3((MIDL_STUBLESS_PROXY_INFO *)&pProxyInfo, 3u, 0i64, a1 ...
+                # Params 2,   GUID, (*a1, a2, 16i64, a3); [PKEY] GUID
+                # Params 3,   not used
+                # Params 4,   Int32 value, MSPID value
+                # Params 5,6  String, Extended ProductID
+                # Params 7,8  DigitalProductId3 Struct
+                # Params 9,+  DigitalProductId4 Struct
+
+                Name       = 'SLpGetMSPidInformation'
+                Dll        = 'sppc.dll'
+                ReturnType = [Int32] # HRESULT
+                Parameters = @(
+                    [IntPtr],
+                    [Guid].MakeByRefType(),
+                    [Int64],
+                    [Int32],
+                    [Int32].MakeByRefType(), [String].MakeByRefType(),
+                    [Int32].MakeByRefType(), [IntPtr].MakeByRefType(),
+                    [Int32].MakeByRefType(), [IntPtr].MakeByRefType()
+            )
         }
     )
     return Register-NativeMethods $functions
