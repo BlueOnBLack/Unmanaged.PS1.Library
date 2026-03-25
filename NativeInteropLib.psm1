@@ -3114,16 +3114,6 @@ Function Init-SLC {
             )
         },
         @{
-                Name       = 'SLGetPackageProductKey'
-                Dll        = 'sppcext.dll'
-                ReturnType = [Int32] # HRESULT
-                Parameters = @(
-                    [Int32],                  # Licence Blob Size
-                    [IntPtr],                 # Licence Blob Data
-                    [IntPtr].MakeByRefType()  # Return Results, ProductKey? String ?
-            )
-        },
-        @{
                 # Params 1,   HSLC, NdrClientCall3((MIDL_STUBLESS_PROXY_INFO *)&pProxyInfo, 3u, 0i64, a1 ...
                 # Params 2,   GUID, (*a1, a2, 16i64, a3); [PKEY] GUID
                 # Params 3,   not used
@@ -3143,6 +3133,90 @@ Function Init-SLC {
                     [Int32].MakeByRefType(), [String].MakeByRefType(),
                     [Int32].MakeByRefType(), [IntPtr].MakeByRefType(),
                     [Int32].MakeByRefType(), [IntPtr].MakeByRefType()
+            )
+        },
+        @{
+                <#
+                    $hSLC              = Manage-SLHandle
+                    [Int32]$peDataType = 0x00 # Type
+                    [UInt32]$pcbValue  = 0x00 # Size
+                    [IntPtr]$ppbValue  = 0L   # Pointer
+
+                    if ([string]::IsNullOrWhiteSpace($pwszValueName)) {
+                        Write-Warning "Use Default Value 'Security-SPP-Action-StateData'`n"
+                        $pwszValueName = 'Security-SPP-Action-StateData'
+                    }
+    
+                    # Gets the policy information after right has been consumed successfully.
+                    # Must call `SLConsumeRight`, before taking any further action
+                    if ($SkuID -ne [Guid]::empty) {
+                        SL-RefreshLicenseStatus -AppID $AppID -skuID $SkuID -hSLC $hSLC | Out-Null
+                    } else {    
+                        SL-RefreshLicenseStatus -AppID $AppID -hSLC $hSLC | Out-Null
+                    }
+
+                    $ret = Invoke-UnmanagedMethod `
+                        -Dll sppc.dll `
+                        -Function SLGetPolicyInformation `
+                        -Values @(
+                            $hSLC,              # [IntPtr]
+                            $pwszValueName,     # [String]
+                            [ref]$peDataType,   # [Int32].MakeByRefType()
+                            [ref]$pcbValue,     # [UInt32].MakeByRefType()
+                            [ref]$ppbValue      # [IntPtr].MakeByRefType()
+                        )
+                #>
+
+                Name       = 'SLGetPolicyInformation'
+                Dll        = 'sppc.dll'
+                ReturnType = [Int32] # HRESULT
+                Parameters = @(
+                    [IntPtr], [String],
+                    [Int32].MakeByRefType(),
+                    [UInt32].MakeByRefType(),
+                    [IntPtr].MakeByRefType()
+            )
+        },
+        @{
+                Name       = 'SLPersistApplicationPolicies'
+                Dll        = 'sppc.dll'
+                ReturnType = [Int32] # HRESULT
+                Parameters = @(
+                    [Guid].MakeByRefType(),
+                    [IntPtr],
+                    [Int32]
+            )
+        },
+        @{
+                Name       = 'SLLoadApplicationPolicies'
+                Dll        = 'sppc.dll'
+                ReturnType = [Int32] # HRESULT
+                Parameters = @(
+                    [Guid].MakeByRefType(),
+                    [IntPtr],
+                    [Int32],
+                    [IntPtr].MakeByRefType()
+            )
+        },
+        @{
+                Name       = 'SLGetApplicationPolicy'
+                Dll        = 'sppc.dll'
+                ReturnType = [Int32] # HRESULT
+                Parameters = @(
+                    [IntPtr],
+                    [String],
+                    [Int32].MakeByRefType(),
+                    [Uint32].MakeByRefType(),
+                    [IntPtr].MakeByRefType()
+            )
+        },
+        @{
+                Name       = 'SLUnloadApplicationPolicies'
+                Dll        = 'sppc.dll'
+                ReturnType = [Int32] # HRESULT
+                Parameters = @(
+                    [IntPtr], 
+                    [Int32]
             )
         }
     )
