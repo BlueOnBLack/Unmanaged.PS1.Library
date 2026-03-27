@@ -3218,6 +3218,40 @@ Function Init-SLC {
                     [IntPtr], 
                     [Int32]
             )
+        },
+        @{
+                <#
+                HRESULT __fastcall SLpGetMachineUGUID(
+                    HSLC hSLC,            // Handle to Licensing Client
+                    PWSTR *ppszMachineID  // Pointer to a Wide String Pointer
+                );
+
+                $hSLC      = Manage-SLHandle
+                $MachineID = [IntPtr]::Zero
+
+                $HR = Invoke-UnmanagedMethod `
+                    -Dll sppc.dll `
+                    -Function SLpGetMachineUGUID `
+                    -Values @($hSLC, [ref]$MachineID)
+                if ($HR -eq 0x00) {
+                    try {
+                        return (
+                            [Guid][marshal]::PtrToStringUni($MachineID)
+                        )
+                    }
+                    finally {
+                        Free-IntPtr $MachineID -Method Local | Out-Null
+                    }
+                }
+                #>
+
+                Name       = 'SLpGetMachineUGUID'
+                Dll        = 'sppc.dll'
+                ReturnType = [Int32] # HRESULT
+                Parameters = @(
+                    [IntPtr], 
+                    [String].MakeByRefType()
+            )
         }
     )
     return Register-NativeMethods $functions
