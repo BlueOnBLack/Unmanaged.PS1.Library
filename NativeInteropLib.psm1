@@ -3619,28 +3619,28 @@ Function Init-PIDGENX {
     # https://forums.mydigitallife.net/threads/enable-active-directory-based-activation.89790/
     
     <#
-    $PKey       = $Pid4.DigitalKey
+    $PKeyÂ  Â  Â  Â = $Pid4.DigitalKey
     $extPid     = $Pid4.AdvancedPID
     $ActId      = $Pid4.ActivationID
     $PKeyConfig = "C:\windows\System32\spp\tokens\pkeyconfig\pkeyconfig.xrm-ms"
 
-    $HWID       = 0L
-    $MPC        = [IntPtr]::Zero
-    $IID        = ""
-    $Edition    = ""
-    $Channel    = ""
-    $Partnum    = ""
+    $HWIDÂ  Â  Â  Â = 0L
+    $MPCÂ  Â  Â  Â  = [IntPtr]::Zero
+    $IIDÂ  Â  Â  Â  = ""
+    $EditionÂ  Â  = ""
+    $ChannelÂ  Â  = ""
+    $PartnumÂ  Â  = ""
     $ret = Invoke-UnmanagedMethod `
-        -Dll pidgenx.dll `
-        -Function GetPKeyData `
-        -Return int32 `
-        -Params "String pKey, String Config, IntPtr MPC, IntPtr null1, Int64 HWID, Out string IID, Out string Edition, Out string Channel, Out string Partnum, IntPtr null2" `
-        -CharSet Unicode `
-        -Values @(
-            $PKey, $PKeyConfig, $Mpc, [IntPtr]::Zero, $HWID,
-            [ref]$IID, [ref]$Edition, [ref]$Channel, [ref]$Partnum,
-            [IntPtr]::Zero
-        )
+Â  Â      -Dll pidgenx.dll `
+Â  Â      -Function GetPKeyData `
+Â  Â      -Return int32 `
+Â  Â      -Params "String pKey, String Config, IntPtr MPC, IntPtr null1, Int64 HWID, Out string IID, Out string Edition, Out string Channel, Out string Partnum, IntPtr null2" `
+Â  Â      -CharSet Unicode `
+Â  Â      -Values @(
+Â  Â  Â  Â      $PKey, $PKeyConfig, $Mpc, [IntPtr]::Zero, $HWID,
+Â  Â  Â  Â      [ref]$IID, [ref]$Edition, [ref]$Channel, [ref]$Partnum,
+Â  Â  Â  Â      [IntPtr]::Zero
+Â  Â      )
     #>
 
     $functions = @(
@@ -11531,7 +11531,7 @@ https://www.ired.team/offensive-security/privilege-escalation
 * github Source C Code
 * https://github.com/RubisetCie/god-mode
 
-* fgsec (Felipe Gaspar) Â· GitHub
+* fgsec (Felipe Gaspar) GitHub
 * https://github.com/fgsec/SharpGetSystem
 * https://github.com/fgsec/Offensive/tree/master
 * https://github.com/fgsec/SharpTokenTheft/tree/main
@@ -13241,10 +13241,10 @@ public static extern int RtlQueryFeatureConfiguration(
 
 // Ntoskrnl.exe, IDA, Local Types
 00000000 _RTL_FEATURE_CONFIGURATION struc ; (sizeof=0xC, align=0x4)
-00000000 FeatureId       dd ?        ; 0x0, 4 bytes — Feature identifier
-00000004 Option          dw ?        ; 0x4, 2 bytes — packed bitfield of options
-00000006 padding         dw ?        ; 0x6, 2 bytes — alignment padding
-00000008 VariantPayload  dd ?        ; 0x8, 4 bytes — payload value
+00000000 FeatureId       dd ?        ; 0x0, 4 bytes â€” Feature identifier
+00000004 Option          dw ?        ; 0x4, 2 bytes â€” packed bitfield of options
+00000006 padding         dw ?        ; 0x6, 2 bytes â€” alignment padding
+00000008 VariantPayload  dd ?        ; 0x8, 4 bytes â€” payload value
 0000000C _RTL_FEATURE_CONFIGURATION ends
 
 //0xc bytes (sizeof)
@@ -13348,7 +13348,6 @@ function Adjust-Feature {
                 EnabledState         = New-field 2 Int32
                 EnabledStateOptions  = New-field 3 Int32
                 VariantFlags         = New-field 4 Int32
-               #Reserved             = New-field 5 Int32   // According to documentation, but not likely,
                 VariantPayloadKind   = New-field 5 UInt32
                 VariantPayload       = New-field 6 UInt32
                 Operation            = New-field 7 Int32
@@ -13388,7 +13387,7 @@ function Adjust-Feature {
         $update.Priority            = $Priority
         $update.EnabledState        = $EnabledState
         $update.EnabledStateOptions = $EnabledStateOptions
-        $update.VariantFlags        = $EnabledState
+        $update.VariantFlags        = $VariantFlags
         $update.VariantPayloadKind  = $VariantPayloadKind
         $update.VariantPayload      = $VariantPayload
         $update.Operation           = $Operation
