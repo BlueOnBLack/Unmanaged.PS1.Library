@@ -3619,28 +3619,28 @@ Function Init-PIDGENX {
     # https://forums.mydigitallife.net/threads/enable-active-directory-based-activation.89790/
     
     <#
-    $PKey       = $Pid4.DigitalKey
+    $PKey       = $Pid4.DigitalKey
     $extPid     = $Pid4.AdvancedPID
     $ActId      = $Pid4.ActivationID
     $PKeyConfig = "C:\windows\System32\spp\tokens\pkeyconfig\pkeyconfig.xrm-ms"
 
-    $HWID       = 0L
-    $MPC        = [IntPtr]::Zero
-    $IID        = ""
-    $Edition    = ""
-    $Channel    = ""
-    $Partnum    = ""
+    $HWID     = 0L
+    $MPC      = [IntPtr]::Zero
+    $IID      = ""
+    $Edition  = ""
+    $Channel  = ""
+    $Partnum  = ""
     $ret = Invoke-UnmanagedMethod `
-        -Dll pidgenx.dll `
-        -Function GetPKeyData `
-        -Return int32 `
-        -Params "String pKey, String Config, IntPtr MPC, IntPtr null1, Int64 HWID, Out string IID, Out string Edition, Out string Channel, Out string Partnum, IntPtr null2" `
-        -CharSet Unicode `
-        -Values @(
-            $PKey, $PKeyConfig, $Mpc, [IntPtr]::Zero, $HWID,
-            [ref]$IID, [ref]$Edition, [ref]$Channel, [ref]$Partnum,
-            [IntPtr]::Zero
-        )
+        -Dll pidgenx.dll `
+        -Function GetPKeyData `
+        -Return int32 `
+        -Params "String pKey, String Config, IntPtr MPC, IntPtr null1, Int64 HWID, Out string IID, Out string Edition, Out string Channel, Out string Partnum, IntPtr null2" `
+        -CharSet Unicode `
+        -Values @(
+            $PKey, $PKeyConfig, $Mpc, [IntPtr]::Zero, $HWID,
+            [ref]$IID, [ref]$Edition, [ref]$Channel, [ref]$Partnum,
+            [IntPtr]::Zero
+        )
     #>
 
     $functions = @(
