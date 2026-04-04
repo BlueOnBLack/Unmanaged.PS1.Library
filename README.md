@@ -308,10 +308,17 @@ Get logon Sid of HToken From User login
 function Get-LogonSid
 
 <#
-Adjust Hidden feature of Windows. Etc.
-Adjust-Feature -FeatureId @(48796508) -State Disable
-Adjust-Feature -FeatureId @(48796508) -State Reset
-Adjust-Feature -FeatureId @(48796508) -State Enable
+$Feature = 58755790
+$Features = @(57517687, 58755790, 59064570)
+
+Set-FeatureConfiguration -FeatureIds $Feature -Action Enable -Mode User | Out-Null
+Set-FeatureConfiguration -FeatureIds $Feature -Action Enable -Mode Policy | Out-Null
+Query-FeatureConfiguration -Feature $Feature # -OutList | ? FeatureId -eq $Feature
+
+Set-WnfFeatureConfig -Store User -Mode Enable -Features $Feature | Out-Null
+Set-WnfFeatureConfig -Store Machine -Mode Enable -Features $Feature | Out-Null
+Query-WnfFeatureConfig -Store User| ? FeatureId -eq $Feature
+Query-WnfFeatureConfig -Store Machine | ? FeatureId -eq $Feature
 #>
 function Adjust-Feature
 ````
