@@ -308,6 +308,8 @@ Get logon Sid of HToken From User login
 function Get-LogonSid
 
 <#
+Feature Control, using WNF & RTL Libaries
+#>
 $Feature = 58755790
 $Features = @(57517687, 58755790, 59064570)
 
@@ -319,8 +321,6 @@ Set-WnfFeatureConfig -Store User -Mode Enable -Features $Feature | Out-Null
 Set-WnfFeatureConfig -Store Machine -Mode Enable -Features $Feature | Out-Null
 Query-WnfFeatureConfig -Store User| ? FeatureId -eq $Feature
 Query-WnfFeatureConfig -Store Machine | ? FeatureId -eq $Feature
-#>
-function Adjust-Feature
 ````
 
 ## Code samples
