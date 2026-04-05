@@ -13127,19 +13127,19 @@ Write-Host 'Mode: Enable' -ForegroundColor Green -NoNewline
 
 Set-FeatureConfiguration -FeatureIds $Feature -Action Enable -Mode User | Out-Null
 Set-FeatureConfiguration -FeatureIds $Feature -Action Enable -Mode Policy | Out-Null
-Query-FeatureConfiguration -Feature $Feature # -OutList | ? FeatureId -eq $Feature
+Query-FeatureConfiguration -Feature  $Feature
 
 Write-Host "Mode: Disable`n" -ForegroundColor Green
 
 Set-FeatureConfiguration -FeatureIds $Feature -Action Disable -Mode User | Out-Null
 Set-FeatureConfiguration -FeatureIds $Feature -Action Disable -Mode Policy | Out-Null
-Query-FeatureConfiguration -Feature $Feature # -OutList | ? FeatureId -eq $Feature
+Query-FeatureConfiguration -Feature  $Feature
 
 Write-Host "Mode: Reset`n" -ForegroundColor Green
 
 Set-FeatureConfiguration -FeatureIds $Feature -Action Reset -Mode User | Out-Null
 Set-FeatureConfiguration -FeatureIds $Feature -Action Reset -Mode Policy | Out-Null
-Query-FeatureConfiguration -Feature $Feature # -OutList | ? FeatureId -eq $Feature
+Query-FeatureConfiguration -Feature  $Feature
 
 return
 #>
@@ -13392,7 +13392,8 @@ Function Init-RTL {
             @('RtlCreateBootStatusDataFile',  'ntdll.dll', [Int32], @([IntPtr])),
             @('RtlQueryFeatureConfiguration', 'ntdll.dll', [Int32], @([UInt32], [UInt32], [UInt64].MakeByRefType(), [IntPtr])),
             @('RtlQueryFeatureConfigurationChangeStamp', 'ntdll.dll', [Int32], @()),
-            @('RtlQueryAllFeatureConfigurations', 'ntdll.dll', [Int32], @([Int32], [UInt64].MakeByRefType(), [IntPtr], [Int32].MakeByRefType()))
+            @('RtlQueryAllFeatureConfigurations', 'ntdll.dll', [Int32], @([Int32], [UInt64].MakeByRefType(), [IntPtr], [Int32].MakeByRefType())),
+            @('NtQuerySystemInformationEx', 'ntdll.dll', [Int32], @([Int32], [IntPtr], [Int32], [IntPtr], [Int32], [IntPtr]))
         ) | % {
             $Module.DefinePInvokeMethod(($_[0]), ($_[1]), 22, 1, [Type]($_[2]), [Type[]]($_[3]), 1, 3).SetImplementationFlags(128) # Def` 128, fail-safe 0
         }
@@ -13505,7 +13506,7 @@ function Set-FeatureConfiguration {
             [Marshal]::WriteInt64($updatePackage, ($_*0x08), 0L)
         }
         
-        $PreviousStamp = try { $RTL::RtlQueryFeatureConfigurationChangeStamp() } catch { 0x00 }
+        $PreviousStamp = [marshal]::ReadInt64([IntPtr]::Add(0x7FFE0000, 0x0710))       # Ntdll!RtlQueryFeatureConfigurationChangeStamp, KI_USER_SHARED_DATA, KSYSTEM_TIME FeatureConfigurationChangeStamp;
         [marshal]::WriteInt64($updatePackage, $Offset.PrevStamp, $PreviousStamp)       # Previous Stamp / 0x00 / RtlQueryFeatureConfigurationChangeStamp
         [marshal]::WriteInt32($updatePackage, $Offset.FlagType, 0x01)                  # RunTime = 0x1
         [marshal]::WriteInt32($updatePackage, $Offset.Count, $Count)                   # Feature Id Total Count
@@ -13678,12 +13679,23 @@ function Set-FeatureConfiguration {
     }
     return $false
 }
-Function Get-FeatureObjectFromPtr {
-    param([IntPtr]$Pointer)
-    
-    $fId   = [Marshal]::ReadInt32($Pointer, 0)
-    $flags = [Marshal]::ReadInt32($Pointer, 4)
-    $vPay  = [Marshal]::ReadInt32($Pointer, 8)
+function Get-FeatureObjectFromPtr {
+    param(
+        [IntPtr]$Pointer,
+        [byte[]]$Buffer
+    )
+
+    if ($Buffer) {
+        # Use managed byte array
+        $fId   = [BitConverter]::ToInt32($Buffer, 0)
+        $flags = [BitConverter]::ToInt32($Buffer, 4)
+        $vPay  = [BitConverter]::ToInt32($Buffer, 8)
+    } else {
+        # Use unmanaged memory
+        $fId   = [Marshal]::ReadInt32($Pointer, 0)
+        $flags = [Marshal]::ReadInt32($Pointer, 4)
+        $vPay  = [Marshal]::ReadInt32($Pointer, 8)
+    }
     
     $StateLookup = @{
         0 = 'Default'
@@ -13713,55 +13725,121 @@ Function Get-FeatureObjectFromPtr {
 Function Query-FeatureConfiguration {
     [CmdletBinding(DefaultParameterSetName = 'Single')]
     param (
-      [Parameter(Mandatory = $true, Position = 0, ParameterSetName = 'Single')]
-      [Int32]$Feature,
+      [Parameter(Mandatory, Position = 0, ParameterSetName = 'Single')]
+      [Int32[]]$Feature,
 
       [Parameter(ParameterSetName = 'List')]
       [switch]$OutList,
 
-      [Parameter(Position = 1)]
-      [ValidateSet(1, 2)]
-      [Int32]$Type = 1 # 1 = Runtime (Active), 2 = Boot (Persistent)
+      [switch]$Atomic,
+      [switch]$SysCall,
+
+      [ValidateSet("Runtime", "Boot")]
+      [string]$Type = "Runtime"
     )
     
     if (!$Global:RTL) {
         Init-RTL
     }
 
-    $ConfigPtr = [IntPtr]::Zero
-    [UInt64]$changeStamp = 0
-    [Int32]$configCount = 0
+    [IntPtr]$ConfigPtr = 0L
+    [Int32]$configCount = 0x0
+
+    # Ntdll!RtlQueryFeatureConfigurationChangeStamp, KI_USER_SHARED_DATA, KSYSTEM_TIME FeatureConfigurationChangeStamp;
+    [UInt64]$changeStamp = [marshal]::ReadInt64([IntPtr]::Add(0x7FFE0000, 0x0710))
+    
+    $Results = [List[RTL_FEATURE_INFO]]::new()
+    $configurationType = if ($Type -eq "Runtime") { 0x01 } else { 0x02 }
+    $Filter = $Feature -and $Feature.Count -and $Feature.Count -gt 1 -and !($Atomic.IsPresent)
 
     try {
-        if ($OutList.IsPresent) {
+        # Case !Single !Atomic -Or $OutList
+
+        if ($OutList.IsPresent -or $Filter) {
             
-            # List of Feature Query
+            if ($SysCall.IsPresent) {
+                Write-Warning 'SysCall Parameter is ignored'
+            }
             $hr = $RTL::RtlQueryAllFeatureConfigurations($ConfigurationType, [ref]$changeStamp, [IntPtr]::Zero, [ref]$configCount)
             if ($configCount -le 0) { 
                 return $null
             }
 
-            $bufferSize = 12 * $configCount
+            $bufferSize = 0x0C * $configCount
             $ConfigPtr = [Marshal]::AllocHGlobal($bufferSize)
             $hr = $RTL::RtlQueryAllFeatureConfigurations($ConfigurationType, [ref]$changeStamp, $ConfigPtr, [ref]$configCount)
-            if ($hr -ne 0) { return $null }
+            if ($hr -ne 0) { 
+                return $null 
+            }
 
-            $results = for ($i = 0; $i -lt $configCount; $i++) {
-                $offset = $i * 12
-                Get-FeatureObjectFromPtr -Pointer ([IntPtr]::Add($ConfigPtr, $offset))
+            for ($i = 0; $i -lt $configCount; $i++) {
+                $Obj = [RTL_FEATURE_INFO](Get-FeatureObjectFromPtr -Pointer ([IntPtr]::Add($ConfigPtr, ($i * 12))))
+                if ($Filter -and !($Obj.FeatureId -in $Feature)) {
+                    continue
+                }
+                $Results.Add($Obj)
+                if ($Filter -and $Results.Count -eq $Feature.Count) { 
+                    break 
+                }
             }
             return $results
 
         } else {
+
+            # Case Single -Or Atomic
             
-            # Single Feature Query
-            $ConfigPtr = [Marshal]::AllocHGlobal(0x0C)
-            $hr = $RTL::RtlQueryFeatureConfiguration($Feature, $Type, [ref]$changeStamp, $ConfigPtr)
-            
-            if ($hr -eq 0) {
-                return Get-FeatureObjectFromPtr -Pointer $ConfigPtr
+            foreach ($f in $Feature) {
+                if ($SysCall.IsPresent) {
+                    
+                    # Call To NtQuerySystemInformationEx
+                    $QueryPtr = [Marshal]::AllocHGlobal(0x08)
+                    $OutPtr = [Marshal]::AllocHGlobal(0x18)
+                    [marshal]::WriteInt32($QueryPtr, 0x00, $configurationType)
+                    [marshal]::WriteInt32($QueryPtr, 0x04, $f)
+
+                    try {
+                        $ret = $Global:RTL::NtQuerySystemInformationEx(
+                            210,       # a1: SystemInformationClass (Feature Configuration)
+                            $QueryPtr, # a2: QueryDetails (Input pointer)
+                            0x08,      # a3: QueryDetailsLength (2 ints = 8 bytes)
+                            $OutPtr,   # a4: SystemInformation (Output pointer)
+                            0x18,      # a5: SystemInformationLength
+                            0L         # a6: ReturnLength (Optional pointer, 0 is fine)
+                        )
+
+                        if ($ret -eq 0) {
+                            $changeStamp = [Marshal]::ReadInt64($OutPtr, 0)    
+                            $buffer = New-Object byte[] 0x0c
+                            [Marshal]::Copy([IntPtr]($OutPtr.ToInt64() + 0x08), $buffer, 0, 0x0c)
+                            $obj = [RTL_FEATURE_INFO](Get-FeatureObjectFromPtr -Buffer $buffer)
+                            $Results.Add($obj)
+                        }
+                    }
+                    finally {
+                        [Marshal]::FreeHGlobal($QueryPtr)
+                        [Marshal]::FreeHGlobal($OutPtr)
+                    }
+
+                } else {
+                    
+                    # Call To RtlQueryFeatureConfiguration
+                    $ConfigPtr = [Marshal]::AllocHGlobal(0x0c)
+                    try {
+                        $hr = $RTL::RtlQueryFeatureConfiguration($f, $configurationType, [ref]$changeStamp, $ConfigPtr)
+                        if ($hr -eq 0) {
+                            $buffer = New-Object byte[] 12
+                            [Marshal]::Copy($ConfigPtr, $buffer, 0, 12)
+                            $obj = [RTL_FEATURE_INFO](Get-FeatureObjectFromPtr -Buffer $buffer)
+                            $Results.Add($obj)
+                        }
+                    }
+                    finally {
+                        [Marshal]::FreeHGlobal($ConfigPtr)
+                        $ConfigPtr = 0L
+                    }
+                }
             }
-            return $null
+            return $Results
         }
     }
     finally {
@@ -13952,6 +14030,8 @@ function Get-WnfObjectFromPtr {
         [Parameter(Mandatory)]
         [UInt32]$ChangeStamp,
 
+        [UInt32[]]$Feature,
+
         [switch]$UseAltFlags
     )
 
@@ -13976,12 +14056,23 @@ function Get-WnfObjectFromPtr {
     $FlagsOffset = if ($UseAltFlags.IsPresent) { 12 } else { 8 }
     $Flags = [Marshal]::ReadInt32($Buffer, $FlagsOffset)
 
+    $Remaining = $null
+    if ($Feature) {
+        $Remaining = [HashSet[uint32]]::new($Feature)
+    }
+
     for ($i = 0; $i -lt $FeatureCount; $i++) {
 
         $CurrentOffset = $FeatureListOffset + ($i * 12)
         if (($CurrentOffset + 12) -gt $BufferSize) { break }
 
         $FeatureId = [Marshal]::ReadInt32($Buffer, $CurrentOffset)
+        if ($Remaining) {
+            if (!($Remaining.Contains($FeatureId))) {
+                continue
+            }
+            $Remaining.Remove($FeatureId) | Out-Null
+        }
         $bits      = [Marshal]::ReadInt32($Buffer, $CurrentOffset + 4)
         $Payload   = [Marshal]::ReadInt32($Buffer, $CurrentOffset + 8)
 
@@ -14064,6 +14155,9 @@ function Get-WnfObjectFromPtr {
         $featureObj.InVariantList = $InVariantList
 
         $FeatureObjects.Add($featureObj)
+        if ($Remaining -and $Remaining.Count -eq 0) {
+            break
+        }
     }
 
     return $FeatureObjects
@@ -14079,7 +14173,7 @@ function Set-WnfFeatureConfig {
         [string]$Mode,
 
         [Parameter(Mandatory)]
-        [uint32[]]$Features
+        [uint32[]]$Feature
     )
     if (!$Global:wnf) {
       Init-WNF
@@ -14104,7 +14198,7 @@ function Set-WnfFeatureConfig {
     $BufferSize = [UInt32]0
     $hr = $Global:wnf::NtQueryWnfStateData([ref]$WnfStore, 0L, 0L, [ref]$ChangeStamp, 0L, [ref]$BufferSize)
 
-    $Count = $Features.Count
+    $Count = $Feature.Count
     $BufferSize = 16 + (12 * $Count)
     $Buffer = [Marshal]::AllocHGlobal($BufferSize)
 
@@ -14123,7 +14217,7 @@ function Set-WnfFeatureConfig {
 
         for ($i=0; $i -lt $Count; $i++) {
             $featureEntry = [Activator]::CreateInstance([Type]'WNF_FEATURE_ENTRY')
-            $featureEntry.FeatureId = [UInt32]$Features[$i]
+            $featureEntry.FeatureId = [UInt32]$Feature[$i]
             $featureEntry.PackedBits = [UInt32]($StateValue -shl 8) # ServiceState at bits 8-9
             $featureEntry.Payload = 0
             [Marshal]::StructureToPtr(
@@ -14151,10 +14245,17 @@ function Set-WnfFeatureConfig {
     }
 }
 function Query-WnfFeatureConfig {
+    [CmdletBinding(DefaultParameterSetName = 'Single')]
     param(
         [Parameter(Mandatory)]
         [ValidateSet("User","Machine")]
-        [string]$Store
+        [string]$Store,
+
+        [Parameter(Mandatory = $true, Position = 0, ParameterSetName = 'Single')]
+        [Uint32[]]$Feature,
+
+        [Parameter(ParameterSetName = 'List')]
+        [switch]$OutList
     )
 
     if (!$Global:wnf) {
@@ -14181,7 +14282,14 @@ function Query-WnfFeatureConfig {
             $hr = $Global:wnf::NtQueryWnfStateData([ref]$WnfStore, 0L, 0L, [ref]$ChangeStamp, $Buffer, [ref]$BufferSize)
 
             if ($hr -eq 0) {
-                Get-WnfObjectFromPtr -Buffer $Buffer -BufferSize $BufferSize -ChangeStamp $ChangeStamp
+            switch ($PSCmdlet.ParameterSetName) {
+                'List' {
+                    Get-WnfObjectFromPtr -Buffer $Buffer -BufferSize $BufferSize -ChangeStamp $ChangeStamp
+                }
+                'Single' {
+                    Get-WnfObjectFromPtr -Buffer $Buffer -BufferSize $BufferSize -ChangeStamp $ChangeStamp -Feature $Feature
+                }
+            }
                 return;
             }
         }
