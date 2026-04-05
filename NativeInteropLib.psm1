@@ -13742,7 +13742,7 @@ Function Query-FeatureConfiguration {
             }
 
             $bufferSize = 12 * $configCount
-            $ConfigPtr = [System.Runtime.InteropServices.Marshal]::AllocHGlobal($bufferSize)
+            $ConfigPtr = [Marshal]::AllocHGlobal($bufferSize)
             $hr = $RTL::RtlQueryAllFeatureConfigurations($ConfigurationType, [ref]$changeStamp, $ConfigPtr, [ref]$configCount)
             if ($hr -ne 0) { return $null }
 
@@ -13783,24 +13783,26 @@ $Features = @(57517687, 58755790, 59064570)
 
 Write-Host 'Mode: Enable' -ForegroundColor Green -NoNewline
 
-Set-WnfFeatureConfig -Store User -Mode Enable -Features $Feature | Out-Null
+Set-WnfFeatureConfig -Store User    -Mode Enable -Features $Feature | Out-Null
 Set-WnfFeatureConfig -Store Machine -Mode Enable -Features $Feature | Out-Null
-Query-WnfFeatureConfig -Store User| ? FeatureId -eq $Feature
+Query-WnfFeatureConfig -Store User    | ? FeatureId -eq $Feature
 Query-WnfFeatureConfig -Store Machine | ? FeatureId -eq $Feature
 
 Write-Host "Mode: Disable`n" -ForegroundColor Green
 
-Set-WnfFeatureConfig -Store User -Mode Disable -Features $Feature | Out-Null
+Set-WnfFeatureConfig -Store User    -Mode Disable -Features $Feature | Out-Null
 Set-WnfFeatureConfig -Store Machine -Mode Disable -Features $Feature | Out-Null
-Query-WnfFeatureConfig -Store User| ? FeatureId -eq $Feature
+Query-WnfFeatureConfig -Store User    | ? FeatureId -eq $Feature
 Query-WnfFeatureConfig -Store Machine | ? FeatureId -eq $Feature
 
 Write-Host "Mode: Default`n" -ForegroundColor Green
 
-Set-WnfFeatureConfig -Store User -Mode Default -Features $Feature | Out-Null
+Set-WnfFeatureConfig -Store User    -Mode Default -Features $Feature | Out-Null
 Set-WnfFeatureConfig -Store Machine -Mode Default -Features $Feature | Out-Null
-Query-WnfFeatureConfig -Store User| ? FeatureId -eq $Feature
+Query-WnfFeatureConfig -Store User    | ? FeatureId -eq $Feature
 Query-WnfFeatureConfig -Store Machine | ? FeatureId -eq $Feature
+
+return
 #>
 #Info
 <#
@@ -13819,13 +13821,15 @@ NtQueryWnfStateData(
 );
 
 EditionUpgradeManagerObj.dll
-__int64 __fastcall wil_details_NtQueryWnfStateData
 __int64 __fastcall wil_details_StagingConfig_Load(__int64 a1, int a2, __int64 a3, __int64 a4)
+__int64 __fastcall wil_details_StagingConfig_QueryFeatureState(__int64 a1, __int64 a2, int a3, int a4)
+__int64 __fastcall wil_StagingConfig_QueryFeatureState(int a1, __int64 a2, __int64 a3, int a4, _DWORD *a5)
+__int64 __fastcall wil_details_NtQueryWnfStateData(__int64 a1, __int64 a2, __int64 a3, __int64 a4, __int64 a5, __int64 a6)
 
 ntoskrnl.exe
+__int64 __fastcall ExpCaptureWnfStateName(__int64 *a1, unsigned __int64 *a2, char a3)
 __int64 __fastcall wil_details_StagingConfig_Load(__int64 a1, int a2, __int64 a3, __int64 a4)
 __int64 __fastcall NtQueryWnfStateData(__int64 a1, __int64 a2, __int64 a3, _DWORD *a4, volatile void *Address,_DWORD *a6)
-__int64 __fastcall ExpCaptureWnfStateName(__int64 *a1, unsigned __int64 *a2, char a3)
 
 Visiting Vibranium Velocity
 A look at new changes to everyone’s favorite A/B system
@@ -13891,18 +13895,20 @@ function Init-WNF {
     # This struct is used only for storing feature entries in an array/list.
     # Each instance represents one feature with its states, text description, and payload
     if (-not ([PSTypeName]'WNF_FEATURE_INFO').Type) {
-    New-Struct `
-        -Module (New-InMemoryModule -ModuleName WNF_FEATURE_INFO) `
-        -FullName WNF_FEATURE_INFO `
-        -StructFields @{
-            FeatureId    = New-field 0 UInt32
-            ServiceState = New-field 1 UInt32
-            UserState    = New-field 2 UInt32
-            TestState    = New-field 3 UInt32
-            StateText    = New-field 4 String
-            Payload      = New-field 5 UInt32
-        } | Out-Null
-}
+        New-Struct `
+            -Module (New-InMemoryModule -ModuleName WNF_FEATURE_INFO) `
+            -FullName WNF_FEATURE_INFO `
+            -StructFields @{
+                FeatureId     = New-field 0 UInt32
+                ServiceState  = New-field 1 UInt32
+                UserState     = New-field 2 UInt32
+                TestState     = New-field 3 UInt32
+                Kind          = New-field 4 UInt32
+                StateText     = New-field 5 String
+                Payload       = New-field 6 UInt32
+                InVariantList = New-field 7 Bool
+            } | Out-Null
+    }
 
     $functions = @(
         @{
@@ -13935,7 +13941,7 @@ function Init-WNF {
     )
     $Global:wnf = Register-NativeMethods $functions
 }
-function Parse-WnfData {
+function Get-WnfObjectFromPtr {
     param (
         [Parameter(Mandatory)]
         [IntPtr]$Buffer,
@@ -13944,25 +13950,34 @@ function Parse-WnfData {
         [UInt32]$BufferSize,
 
         [Parameter(Mandatory)]
-        [UInt32]$ChangeStamp
+        [UInt32]$ChangeStamp,
+
+        [switch]$UseAltFlags
     )
 
-    # Read Header Information
-    $Version      = [Marshal]::ReadByte($Buffer,  0)
+    # EditionUpgradeManagerObj.dll
+    # __int64 __fastcall wil_details_StagingConfig_QueryFeatureState(__int64 a1, __int64 a2, int a3, int a4)
+    # __int64 __fastcall wil_StagingConfig_QueryFeatureState(int a1, __int64 a2, __int64 a3, int a4, _DWORD *a5)
+
+    $Version      = [Marshal]::ReadByte($Buffer, 0)
     $HeaderSize   = [Marshal]::ReadInt16($Buffer, 2)
     $FeatureCount = [Marshal]::ReadInt16($Buffer, 4)
     $VariantCount = [Marshal]::ReadInt16($Buffer, 6)
 
     if ($Version -ne 2) {
-        Write-Warning "Unexpected WNF Version ($Version). Parsing may be inaccurate."
+        Write-Warning "Unexpected WNF Version ($Version)"
     }
 
-    # Prepare strongly typed result list
-    $FeatureObjects = [System.Collections.Generic.List[WNF_FEATURE_INFO]]::new()
+    $FeatureObjects = [List[WNF_FEATURE_INFO]]::new()
 
-    # Each Feature Entry is 12 bytes
     $FeatureListOffset = $HeaderSize
+    $VariantListOffset = $HeaderSize + ($FeatureCount * 12)
+
+    $FlagsOffset = if ($UseAltFlags.IsPresent) { 12 } else { 8 }
+    $Flags = [Marshal]::ReadInt32($Buffer, $FlagsOffset)
+
     for ($i = 0; $i -lt $FeatureCount; $i++) {
+
         $CurrentOffset = $FeatureListOffset + ($i * 12)
         if (($CurrentOffset + 12) -gt $BufferSize) { break }
 
@@ -13970,26 +13985,83 @@ function Parse-WnfData {
         $bits      = [Marshal]::ReadInt32($Buffer, $CurrentOffset + 4)
         $Payload   = [Marshal]::ReadInt32($Buffer, $CurrentOffset + 8)
 
-        # Decode service/user/test state from bits
-        $ServiceState = ($bits -shr 8) -band 0x3
-        $UserState    = ($bits -shr 12) -band 0x3
-        $TestState    = ($bits -shr 14) -band 0x3
-
-        $StateText = switch ($ServiceState) {
-            0 { "Default" }
-            1 { "Disabled" }
-            2 { "Enabled" }
-            Default { "Unknown ($ServiceState)" }
+        if ($Flags -band 4) { $bits = $bits -band 0xFFFFCFFF }
+        if ($Flags -band 2) { $bits = $bits -band 0xFFFFF3FF }
+        if ($Flags -band 1) { $bits = $bits -band 0xFFFFFCFF }
+        if ($Flags -band 8) {
+            $bits    = $bits -band 0xC0FFFFFF
+            $Payload = 0
         }
 
-        # Create strongly typed struct
+        $ServState = ($bits -shr 8)  -band 0x3
+        $UserState = ($bits -shr 10) -band 0x3
+        $TestState = ($bits -shr 12) -band 0x3
+        $Kind      = ($bits -shr 30) -band 0x3
+
+        if ($TestState -ne 0) {
+            $EffectiveState = $TestState
+        }
+        elseif ($UserState -ne 0) {
+            $EffectiveState = $UserState
+        }
+        else {
+            $EffectiveState = $ServState
+        }
+
+        $byte1 = ($bits -shr 8) -band 0xFF
+
+        $valid =
+            ($FeatureId -ne 0) -and (
+                ((($byte1 -bor (($bits -shr 10) -band 0xFF) -bor (($bits -shr 12) -band 0xFF)) -band 3) -ne 0) -or
+                (($bits -band 0x3F000000) -ne 0) -or
+                (($bits -band 2) -ne 0)
+            )
+
+        if (-not $valid) {
+            continue
+        }
+
+        # ----------------------------------------
+        # Variant list check (matches tail loop)
+        # ----------------------------------------
+
+        $InVariantList = $false
+        if ($VariantCount -gt 0) {
+            for ($v = 0; $v -lt $VariantCount; $v++) {
+                $VarOffset = $VariantListOffset + ($v * 16)  # 4 DWORD stride
+                if (($VarOffset + 4) -gt $BufferSize) { break }
+
+                $VarFeatureId = [Marshal]::ReadInt32($Buffer, $VarOffset)
+                if ($VarFeatureId -eq $FeatureId) {
+                    $InVariantList = $true
+                    break
+                }
+            }
+        }
+
+        # ----------------------------------------
+        # Human-readable state
+        # ----------------------------------------
+
+        $StateText = switch ($EffectiveState) {
+            1 { "Disabled" }
+            2 { "Enabled" }
+            default { "Default/Unknown" }
+        }
+
+        # ----------------------------------------
+        # Build object
+        # ----------------------------------------
+
         $featureObj = [WNF_FEATURE_INFO]::new()
-        $featureObj.FeatureId    = $FeatureId
-        $featureObj.ServiceState = $ServiceState
-        $featureObj.UserState    = $UserState
-        $featureObj.TestState    = $TestState
-        $featureObj.StateText    = $StateText
-        $featureObj.Payload      = $Payload
+        $featureObj.FeatureId     = $FeatureId
+        $featureObj.ServiceState  = $ServState
+        $featureObj.UserState     = $UserState
+        $featureObj.TestState     = $TestState
+        $featureObj.Kind          = $Kind
+        $featureObj.StateText     = $StateText
+        $featureObj.Payload       = $Payload
+        $featureObj.InVariantList = $InVariantList
 
         $FeatureObjects.Add($featureObj)
     }
@@ -14109,7 +14181,7 @@ function Query-WnfFeatureConfig {
             $hr = $Global:wnf::NtQueryWnfStateData([ref]$WnfStore, 0L, 0L, [ref]$ChangeStamp, $Buffer, [ref]$BufferSize)
 
             if ($hr -eq 0) {
-                Parse-WnfData -Buffer $Buffer -BufferSize $BufferSize -ChangeStamp $ChangeStamp
+                Get-WnfObjectFromPtr -Buffer $Buffer -BufferSize $BufferSize -ChangeStamp $ChangeStamp
                 return;
             }
         }
