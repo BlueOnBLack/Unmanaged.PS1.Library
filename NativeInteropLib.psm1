@@ -13474,7 +13474,7 @@ function Write-FeatureData {
     $update.FeatureId           = $FeatureId
     $update.Priority            = $Priority
     $update.EnabledState        = $EnabledState
-    $update.PackedOptions       = $VariantPayloadKind
+    $update.PackedOptions       = ($VariantPayloadKind -band 0x1) -shl 6
     $update.EnabledStateOptions = [byte]$EnabledStateOptions
     $update.VariantFlags        = $VariantFlags
     $update.VariantPayload      = [uint32]$VariantPayload
