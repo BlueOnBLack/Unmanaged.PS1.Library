@@ -6195,7 +6195,13 @@ function Initialize-ApiObject {
     }
 
     if ($ApiSpec.Sub -ne $null -and $ApiSpec.Sub -gt 0) {
-        $IDABase = 0x180000000L
+        if ($ApiSpec.Dll -like "*.exe") {
+            $IDABase = 0x140000000L  # Standard EXE Image Base
+        } elseif ($ApiSpec.Dll -like "*.dll") {
+            $IDABase = 0x180000000L  # Standard DLL Image Base
+        } else {
+            throw "Cant find Offset of base address"
+        }
         $RelativeOffset = $Sub - $IDABase
         $funcAddress = [IntPtr]($hModule.ToInt64() + $RelativeOffset)
     } elseif ($ApiSpec.Function){
