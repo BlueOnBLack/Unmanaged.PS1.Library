@@ -6156,16 +6156,20 @@ function Build-ApiInterfaceSpec {
 
         [Parameter(Mandatory = $false, Position = 6)]
         [ValidateSet("Unicode", "Ansi")]
-        [string]$CharSet = "Unicode"
+        [string]$CharSet = "Unicode",
+
+        [Parameter(Mandatory = $false, Position = 7)]
+        [Int64]$Sub = 0L
     )
 
     return [PSCustomObject]@{
-        Dll     = $Dll
-        Function= $Function
-        Return  = $Return
-        Params  = $Params
+        Dll         = $Dll
+        Function    = $Function
+        Return      = $Return
+        Params      = $Params
         CallingType = $CallingConvention
         CharSet     = $CharSet
+        Sub         = $Sub
     }
 }
 function Initialize-ApiObject {
@@ -6190,13 +6194,19 @@ function Initialize-ApiObject {
         throw "Failed to load DLL: $($ApiSpec.Dll)"
     }
 
-    $funcAddress = [IntPtr]::Zero
-    $AnsiPtr = Init-NativeString -Value $ApiSpec.Function -Encoding Ansi
-    $hresult = $Global:ntdll::LdrGetProcedureAddressForCaller(
-        $hModule, $AnsiPtr, 0, [ref]$funcAddress, 0, 0)
-    Free-NativeString -StringPtr $AnsiPtr
-    if ($funcAddress -eq [IntPtr]::Zero -or $hresult -ne 0) {
-        throw "Failed to find function: $($ApiSpec.Function)"
+    if ($ApiSpec.Sub -ne $null -and $ApiSpec.Sub -gt 0) {
+        $IDABase = 0x180000000L
+        $RelativeOffset = $Sub - $IDABase
+        $funcAddress = [IntPtr]($hModule.ToInt64() + $RelativeOffset)
+    } elseif ($ApiSpec.Function){
+        $funcAddress = [IntPtr]::Zero
+        $AnsiPtr = Init-NativeString -Value $ApiSpec.Function -Encoding Ansi
+        $hresult = $Global:ntdll::LdrGetProcedureAddressForCaller(
+            $hModule, $AnsiPtr, 0, [ref]$funcAddress, 0, 0)
+        Free-NativeString -StringPtr $AnsiPtr
+        if ($funcAddress -eq [IntPtr]::Zero -or $hresult -ne 0) {
+            throw "Failed to find function: $($ApiSpec.Function)"
+        }
     }
 
     # Build delegate
@@ -6438,11 +6448,14 @@ function Invoke-UnmanagedMethod {
         [string]$CharSet = "Unicode",
 
         [Parameter(Mandatory = $false, Position = 8)]
+        [Int64]$Sub = 0L,
+
+        [Parameter(Mandatory = $false, Position = 9)]
         [ValidateNotNullOrEmpty()]
         [ValidateSet('Allocate', 'AllocateEx', 'Protect')]
         [string]$Mode = 'Allocate',
 
-        [Parameter(Mandatory = $false, Position = 9)]
+        [Parameter(Mandatory = $false, Position = 10)]
         [switch]$SysCall
     )
 
@@ -6502,7 +6515,8 @@ function Invoke-UnmanagedMethod {
         -Return $Return  `
         -CallingConvention $CallingConvention `
         -Params $Params `
-        -CharSet $CharSet
+        -CharSet $CharSet `
+        -Sub $Sub
 
     $apiObj = if ($SysCall) {
         Initialize-ApiObject -ApiSpec $apiSpec -Mode $Mode -SysCall
